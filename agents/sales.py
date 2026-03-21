@@ -1,9 +1,8 @@
 """Sales agent — outreach, partnerships, pipeline."""
 
-from crewai import Agent
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM
 
-from config import AGENT_MODEL, TEMPERATURES, ANTHROPIC_API_KEY
+from config import AGENT_MODEL, TEMPERATURES
 from voice.jeremy_voice import get_voice_prompt
 from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
@@ -25,10 +24,9 @@ You store insights and pipeline intelligence in the shared memory fabric under t
 
 
 def create_sales_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = ChatAnthropic(
+    llm = LLM(
         model=AGENT_MODEL,
         temperature=TEMPERATURES["sales"],
-        api_key=ANTHROPIC_API_KEY,
     )
     memory_tools = create_memory_tools(lens, logger)
     return Agent(

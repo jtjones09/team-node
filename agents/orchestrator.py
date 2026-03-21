@@ -1,9 +1,8 @@
 """Orchestrator agent — pure router, no domain tools, no opinions."""
 
-from crewai import Agent
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM
 
-from config import ROUTING_MODEL, TEMPERATURES, ANTHROPIC_API_KEY
+from config import ROUTING_MODEL, TEMPERATURES
 
 ORCHESTRATOR_BACKSTORY = """You are a task router for a non-hierarchical team of domain experts.
 Your ONLY job is to analyze incoming tasks and route them to the right agent(s).
@@ -34,10 +33,9 @@ When in doubt about routing, assign to Planner/Researcher — they have the wide
 
 
 def create_orchestrator() -> Agent:
-    llm = ChatAnthropic(
+    llm = LLM(
         model=ROUTING_MODEL,
         temperature=TEMPERATURES["orchestrator"],
-        api_key=ANTHROPIC_API_KEY,
     )
     return Agent(
         role="Orchestrator",

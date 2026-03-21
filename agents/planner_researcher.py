@@ -1,9 +1,8 @@
 """Planner/Researcher agent — research, cross-domain synthesis, memory custodian."""
 
-from crewai import Agent
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM
 
-from config import REASONING_MODEL, TEMPERATURES, ANTHROPIC_API_KEY
+from config import REASONING_MODEL, TEMPERATURES
 from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
 from tools.memory_tools import create_memory_tools
@@ -32,10 +31,9 @@ read from ALL domain namespaces.
 
 
 def create_planner_researcher_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = ChatAnthropic(
+    llm = LLM(
         model=REASONING_MODEL,
         temperature=TEMPERATURES["planner_researcher"],
-        api_key=ANTHROPIC_API_KEY,
     )
     memory_tools = create_memory_tools(lens, logger)
     return Agent(

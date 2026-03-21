@@ -7,8 +7,8 @@ from pathlib import Path
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # --- Model Settings ---
-MODEL_SONNET = "claude-sonnet-4-20250514"
-MODEL_OPUS = "claude-opus-4-20250514"
+MODEL_SONNET = "anthropic/claude-sonnet-4-20250514"
+MODEL_OPUS = "anthropic/claude-opus-4-20250514"
 
 # Routing model (orchestrator only)
 ROUTING_MODEL = MODEL_SONNET

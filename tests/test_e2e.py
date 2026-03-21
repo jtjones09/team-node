@@ -7,52 +7,34 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+os.environ.setdefault("ANTHROPIC_API_KEY", "fake-key-for-tests")
+
 try:
     import crewai  # noqa: F401
-    import langchain_anthropic  # noqa: F401
     HAS_DEPS = True
 except ImportError:
     HAS_DEPS = False
 
 
-@unittest.skipUnless(HAS_DEPS, "crewai/langchain-anthropic not installed")
+@unittest.skipUnless(HAS_DEPS, "crewai not installed")
 class TestCrewAssembly(unittest.TestCase):
     """Test that the crew assembles correctly with all agents."""
 
     @patch("crew.ChromaFallback")
-    @patch("agents.orchestrator.ChatAnthropic")
-    @patch("agents.marketing.ChatAnthropic")
-    @patch("agents.sales.ChatAnthropic")
-    @patch("agents.engineer.ChatAnthropic")
-    @patch("agents.architect.ChatAnthropic")
-    @patch("agents.planner_researcher.ChatAnthropic")
-    @patch("agents.security.ChatAnthropic")
-    @patch("agents.data_analytics.ChatAnthropic")
-    def test_crew_has_eight_agents(self, *mocks):
+    def test_crew_has_eight_agents(self, chroma_mock):
         from crew import build_crew
-        # Mock the ChromaDB client
-        chroma_mock = mocks[-1]
         chroma_instance = MagicMock()
         chroma_instance.retrieve.return_value = []
         chroma_instance.store.return_value = "mock-id"
         chroma_mock.return_value = chroma_instance
 
         crew = build_crew("test goal")
-        # 7 domain agents + 1 orchestrator = 8 total
-        self.assertEqual(len(crew.agents), 8)
+        # 7 domain agents in agents list (orchestrator is manager_agent, separate)
+        self.assertEqual(len(crew.agents), 7)
 
     @patch("crew.ChromaFallback")
-    @patch("agents.orchestrator.ChatAnthropic")
-    @patch("agents.marketing.ChatAnthropic")
-    @patch("agents.sales.ChatAnthropic")
-    @patch("agents.engineer.ChatAnthropic")
-    @patch("agents.architect.ChatAnthropic")
-    @patch("agents.planner_researcher.ChatAnthropic")
-    @patch("agents.security.ChatAnthropic")
-    @patch("agents.data_analytics.ChatAnthropic")
-    def test_crew_agent_roles(self, *mocks):
+    def test_crew_agent_roles(self, chroma_mock):
         from crew import build_crew
-        chroma_mock = mocks[-1]
         chroma_instance = MagicMock()
         chroma_instance.retrieve.return_value = []
         chroma_instance.store.return_value = "mock-id"
@@ -60,8 +42,9 @@ class TestCrewAssembly(unittest.TestCase):
 
         crew = build_crew("test goal")
         roles = [a.role for a in crew.agents]
+        # Orchestrator is manager_agent, not in agents list
+        self.assertEqual(crew.manager_agent.role, "Orchestrator")
         expected_roles = [
-            "Orchestrator",
             "Marketing Specialist",
             "Sales Specialist",
             "Engineer",

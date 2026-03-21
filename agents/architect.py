@@ -1,9 +1,8 @@
 """Architect agent — system design, specs, trade-off analysis."""
 
-from crewai import Agent
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM
 
-from config import AGENT_MODEL, TEMPERATURES, ANTHROPIC_API_KEY
+from config import AGENT_MODEL, TEMPERATURES
 from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
 from tools.memory_tools import create_memory_tools
@@ -22,10 +21,9 @@ memory fabric under the "architect" domain namespace.
 
 
 def create_architect_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = ChatAnthropic(
+    llm = LLM(
         model=AGENT_MODEL,
         temperature=TEMPERATURES["architect"],
-        api_key=ANTHROPIC_API_KEY,
     )
     memory_tools = create_memory_tools(lens, logger)
     return Agent(

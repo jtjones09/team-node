@@ -68,8 +68,9 @@ def build_crew(goal: str, verbose: bool = True) -> Crew:
     )
 
     # --- Assemble the crew ---
+    # CrewAI requires manager_agent to NOT be in the agents list
     crew = Crew(
-        agents=[orchestrator, marketing, sales, engineer, architect, planner, security, data_analytics],
+        agents=[marketing, sales, engineer, architect, planner, security, data_analytics],
         tasks=[routing_task],
         process=Process.hierarchical,
         manager_agent=orchestrator,
