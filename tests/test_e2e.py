@@ -20,29 +20,28 @@ except ImportError:
 class TestCrewAssembly(unittest.TestCase):
     """Test that the crew assembles correctly with all agents."""
 
-    @patch("crew.ChromaFallback")
-    def test_crew_has_eight_agents(self, chroma_mock):
+    @patch("crew.FabricBridge")
+    def test_crew_has_seven_domain_agents(self, fabric_mock):
         from crew import build_crew
-        chroma_instance = MagicMock()
-        chroma_instance.retrieve.return_value = []
-        chroma_instance.store.return_value = "mock-id"
-        chroma_mock.return_value = chroma_instance
+        fabric_instance = MagicMock()
+        fabric_instance.retrieve.return_value = []
+        fabric_instance.store.return_value = "mock-id"
+        fabric_mock.return_value = fabric_instance
 
         crew = build_crew("test goal")
         # 7 domain agents in agents list (orchestrator is manager_agent, separate)
         self.assertEqual(len(crew.agents), 7)
 
-    @patch("crew.ChromaFallback")
-    def test_crew_agent_roles(self, chroma_mock):
+    @patch("crew.FabricBridge")
+    def test_crew_agent_roles(self, fabric_mock):
         from crew import build_crew
-        chroma_instance = MagicMock()
-        chroma_instance.retrieve.return_value = []
-        chroma_instance.store.return_value = "mock-id"
-        chroma_mock.return_value = chroma_instance
+        fabric_instance = MagicMock()
+        fabric_instance.retrieve.return_value = []
+        fabric_instance.store.return_value = "mock-id"
+        fabric_mock.return_value = fabric_instance
 
         crew = build_crew("test goal")
         roles = [a.role for a in crew.agents]
-        # Orchestrator is manager_agent, not in agents list
         self.assertEqual(crew.manager_agent.role, "Orchestrator")
         expected_roles = [
             "Marketing Specialist",
@@ -55,6 +54,20 @@ class TestCrewAssembly(unittest.TestCase):
         ]
         for role in expected_roles:
             self.assertIn(role, roles, f"Missing agent role: {role}")
+
+    @patch("crew.FabricBridge")
+    def test_crew_ollama_mode(self, fabric_mock):
+        from crew import build_crew
+        fabric_instance = MagicMock()
+        fabric_instance.retrieve.return_value = []
+        fabric_instance.store.return_value = "mock-id"
+        fabric_mock.return_value = fabric_instance
+
+        crew = build_crew("test goal", use_ollama=True, ollama_model="llama3.2:3b")
+        # All agents should have ollama model
+        for agent in crew.agents:
+            self.assertIn("llama3.2", agent.llm.model)
+        self.assertIn("llama3.2", crew.manager_agent.llm.model)
 
 
 class TestVoiceConstraints(unittest.TestCase):
@@ -90,6 +103,17 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(ROUTING_MODEL, MODEL_SONNET)
         self.assertEqual(AGENT_MODEL, MODEL_SONNET)
         self.assertEqual(REASONING_MODEL, MODEL_OPUS)
+
+    def test_persistent_api_key(self):
+        from config import get_api_key
+        # Should return the env var we set
+        key = get_api_key()
+        self.assertEqual(key, "fake-key-for-tests")
+
+    def test_ollama_defaults(self):
+        from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+        self.assertEqual(OLLAMA_BASE_URL, "http://localhost:11434")
+        self.assertEqual(OLLAMA_MODEL, "llama3.2:3b")
 
 
 if __name__ == "__main__":

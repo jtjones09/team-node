@@ -23,8 +23,8 @@ You store insights and pipeline intelligence in the shared memory fabric under t
 """.format(voice_constraints=get_voice_prompt())
 
 
-def create_sales_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = LLM(
+def create_sales_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_override=None) -> Agent:
+    llm = llm_override or LLM(
         model=AGENT_MODEL,
         temperature=TEMPERATURES["sales"],
     )

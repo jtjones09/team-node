@@ -30,8 +30,8 @@ read from ALL domain namespaces.
 """
 
 
-def create_planner_researcher_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = LLM(
+def create_planner_researcher_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_override=None) -> Agent:
+    llm = llm_override or LLM(
         model=REASONING_MODEL,
         temperature=TEMPERATURES["planner_researcher"],
     )

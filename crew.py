@@ -1,9 +1,12 @@
 """Crew assembly — wires up all agents, lenses, memory, and process config."""
 
-from crewai import Crew, Task, Process
+from crewai import Crew, Task, Process, LLM
 
-from config import CHROMA_PERSIST_DIR, LOG_DIR
-from memory.chroma_fallback import ChromaFallback
+from config import (
+    LOG_DIR, FABRIC_DATA_FILE, TEMPERATURES,
+    OLLAMA_BASE_URL, OLLAMA_MODEL, get_project_paths,
+)
+from memory.fabric_bridge import FabricBridge
 from memory.markdown_log import MarkdownLog
 from lenses.perspective import PerspectiveLens
 from agents.orchestrator import create_orchestrator
@@ -15,23 +18,51 @@ from agents.planner_researcher import create_planner_researcher_agent
 from agents.security import create_security_agent
 from agents.data_analytics import create_data_analytics_agent
 
-# DECISION: Using ChromaDB fallback until Ecphory fabric CLI is ready.
-# Swap to FabricBridge by uncommenting the import and changing `memory_backend` below.
-# from memory.fabric_bridge import FabricBridge
+
+def _make_ollama_llms(model_name: str) -> dict[str, LLM]:
+    """Create per-agent Ollama LLM instances with correct temperatures."""
+    llms = {}
+    for agent_name, temp in TEMPERATURES.items():
+        llms[agent_name] = LLM(
+            model=f"ollama/{model_name}",
+            base_url=OLLAMA_BASE_URL,
+            temperature=temp,
+        )
+    return llms
 
 
-def build_crew(goal: str, verbose: bool = True) -> Crew:
+def build_crew(
+    goal: str,
+    verbose: bool = True,
+    use_ollama: bool = False,
+    ollama_model: str | None = None,
+    project: str | None = None,
+) -> Crew:
     """Assemble the full 7-agent team with shared memory fabric.
 
     Args:
         goal: The task/goal to accomplish.
         verbose: Whether to enable verbose agent output.
+        use_ollama: Use local Ollama inference instead of Anthropic.
+        ollama_model: Override Ollama model name (default from config).
+        project: Project name for scoped memory/logs. Uses flat paths if None.
     """
-    # --- Memory backend ---
-    memory_backend = ChromaFallback(str(CHROMA_PERSIST_DIR))
-    # memory_backend = FabricBridge(FABRIC_BINARY, str(FABRIC_DATA_FILE))
+    # --- LLM backend ---
+    llms = {}
+    if use_ollama:
+        llms = _make_ollama_llms(ollama_model or OLLAMA_MODEL)
 
-    logger = MarkdownLog(str(LOG_DIR))
+    # --- Memory backend (project-scoped or flat) ---
+    if project:
+        paths = get_project_paths(project)
+        fabric_file = str(paths["fabric_file"])
+        log_dir = str(paths["log_dir"])
+    else:
+        fabric_file = str(FABRIC_DATA_FILE)
+        log_dir = str(LOG_DIR)
+
+    memory_backend = FabricBridge(fabric_file)
+    logger = MarkdownLog(log_dir)
 
     # --- Perspective lenses (one per domain agent) ---
     lenses = {
@@ -45,17 +76,16 @@ def build_crew(goal: str, verbose: bool = True) -> Crew:
     }
 
     # --- Create agents ---
-    orchestrator = create_orchestrator()
-    marketing = create_marketing_agent(lenses["marketing"], logger)
-    sales = create_sales_agent(lenses["sales"], logger)
-    engineer = create_engineer_agent(lenses["engineer"], logger)
-    architect = create_architect_agent(lenses["architect"], logger)
-    planner = create_planner_researcher_agent(lenses["planner_researcher"], logger)
-    security = create_security_agent(lenses["security"], logger)
-    data_analytics = create_data_analytics_agent(lenses["data_analytics"], logger)
+    orchestrator = create_orchestrator(llm_override=llms.get("orchestrator"))
+    marketing = create_marketing_agent(lenses["marketing"], logger, llm_override=llms.get("marketing"))
+    sales = create_sales_agent(lenses["sales"], logger, llm_override=llms.get("sales"))
+    engineer = create_engineer_agent(lenses["engineer"], logger, llm_override=llms.get("engineer"))
+    architect = create_architect_agent(lenses["architect"], logger, llm_override=llms.get("architect"))
+    planner = create_planner_researcher_agent(lenses["planner_researcher"], logger, llm_override=llms.get("planner_researcher"))
+    security = create_security_agent(lenses["security"], logger, llm_override=llms.get("security"))
+    data_analytics = create_data_analytics_agent(lenses["data_analytics"], logger, llm_override=llms.get("data_analytics"))
 
     # --- Define the task ---
-    # The orchestrator gets the initial task and delegates to domain agents
     routing_task = Task(
         description=(
             f"Analyze the following goal and route it to the appropriate domain agent(s). "

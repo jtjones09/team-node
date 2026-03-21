@@ -24,8 +24,8 @@ write only to your own namespace.
 """.format(voice_constraints=get_voice_prompt())
 
 
-def create_marketing_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = LLM(
+def create_marketing_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_override=None) -> Agent:
+    llm = llm_override or LLM(
         model=AGENT_MODEL,
         temperature=TEMPERATURES["marketing"],
     )

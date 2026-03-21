@@ -21,8 +21,8 @@ memory fabric under the "engineer" domain namespace.
 """
 
 
-def create_engineer_agent(lens: PerspectiveLens, logger: MarkdownLog) -> Agent:
-    llm = LLM(
+def create_engineer_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_override=None) -> Agent:
+    llm = llm_override or LLM(
         model=AGENT_MODEL,
         temperature=TEMPERATURES["engineer"],
     )

@@ -1,4 +1,4 @@
-"""Tests for memory round-trip across agents — interface, lenses, and fallback."""
+"""Tests for memory round-trip across agents — interface, lenses, and fabric bridge."""
 
 import sys
 import os
@@ -139,6 +139,60 @@ class TestPerspectiveLens(unittest.TestCase):
             self.assertGreaterEqual(results[0]["score"], results[1]["score"])
 
 
+class TestFabricBridge(unittest.TestCase):
+    """Test the JSON file-based fabric bridge."""
+
+    def test_store_and_retrieve(self):
+        from memory.fabric_bridge import FabricBridge
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = FabricBridge(os.path.join(tmpdir, "fabric.json"))
+            node_id = bridge.store("marketing strategy update", {"domain": "marketing"})
+            results = bridge.retrieve("marketing strategy")
+            self.assertTrue(len(results) > 0)
+            self.assertEqual(results[0]["id"], node_id)
+
+    def test_persistence(self):
+        from memory.fabric_bridge import FabricBridge
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "fabric.json")
+            bridge1 = FabricBridge(path)
+            node_id = bridge1.store("persistent data", {"domain": "engineer"})
+            # New instance should load from file
+            bridge2 = FabricBridge(path)
+            results = bridge2.retrieve("persistent data")
+            self.assertTrue(len(results) > 0)
+            self.assertEqual(results[0]["id"], node_id)
+
+    def test_domain_filter(self):
+        from memory.fabric_bridge import FabricBridge
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = FabricBridge(os.path.join(tmpdir, "fabric.json"))
+            bridge.store("security vulnerability", {"domain": "security"})
+            bridge.store("marketing plan", {"domain": "marketing"})
+            sec_results = bridge.retrieve("vulnerability", domain="security")
+            mkt_results = bridge.retrieve("vulnerability", domain="marketing")
+            self.assertTrue(any("vulnerability" in r["content"] for r in sec_results))
+            self.assertFalse(any("vulnerability" in r["content"] for r in mkt_results))
+
+    def test_delete(self):
+        from memory.fabric_bridge import FabricBridge
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = FabricBridge(os.path.join(tmpdir, "fabric.json"))
+            node_id = bridge.store("to delete")
+            self.assertTrue(bridge.delete(node_id))
+            self.assertFalse(bridge.delete("nonexistent"))
+
+    def test_list_domains(self):
+        from memory.fabric_bridge import FabricBridge
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = FabricBridge(os.path.join(tmpdir, "fabric.json"))
+            bridge.store("a", {"domain": "marketing"})
+            bridge.store("b", {"domain": "security"})
+            domains = bridge.list_domains()
+            self.assertIn("marketing", domains)
+            self.assertIn("security", domains)
+
+
 class TestMarkdownLog(unittest.TestCase):
 
     def test_log_creates_file(self):
@@ -160,6 +214,81 @@ class TestMarkdownLog(unittest.TestCase):
             content = logger.read_log("engineering")
             self.assertIn("Task 1", content)
             self.assertIn("Task 2", content)
+
+
+class TestProvenance(unittest.TestCase):
+    """Test provenance tracking."""
+
+    def test_record_output(self):
+        from memory.provenance import ProvenanceTracker
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tracker = ProvenanceTracker(tmpdir)
+            entry = tracker.record_output(
+                agent="marketing",
+                project="test-project",
+                goal="write a post",
+                output="Here is a LinkedIn post about...",
+                context_used=["abc123"],
+                confidence=0.9,
+            )
+            self.assertEqual(entry["type"], "agent_output")
+            self.assertEqual(entry["agent"], "marketing")
+            self.assertIn("timestamp", entry)
+
+    def test_record_decision(self):
+        from memory.provenance import ProvenanceTracker
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tracker = ProvenanceTracker(tmpdir)
+            entry = tracker.record_decision(
+                agent="architect",
+                project="ecphory",
+                decision="Use perspective lenses",
+                reasoning="Containers fragment what the fabric unifies",
+                alternatives=["Docker containers", "VM isolation"],
+            )
+            self.assertEqual(entry["type"], "decision")
+            self.assertEqual(len(entry["alternatives_considered"]), 2)
+
+    def test_persistence_and_get_recent(self):
+        from memory.provenance import ProvenanceTracker
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tracker1 = ProvenanceTracker(tmpdir)
+            tracker1.record_output("eng", "proj", "build", "built it", confidence=0.8)
+            tracker1.record_decision("arch", "proj", "use X", "because Y")
+            # New instance should load from file
+            tracker2 = ProvenanceTracker(tmpdir)
+            entries = tracker2.get_recent(limit=10)
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0]["type"], "agent_output")
+            self.assertEqual(entries[1]["type"], "decision")
+
+    def test_markdown_log_created(self):
+        from memory.provenance import ProvenanceTracker
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tracker = ProvenanceTracker(tmpdir)
+            tracker.record_output("marketing", "proj", "goal", "output text")
+            md_path = os.path.join(tmpdir, "provenance.md")
+            self.assertTrue(os.path.exists(md_path))
+            content = open(md_path).read()
+            self.assertIn("marketing", content)
+            self.assertIn("AGENT_OUTPUT", content)
+
+
+class TestMultiProject(unittest.TestCase):
+    """Test multi-project path scoping."""
+
+    def test_get_project_paths(self):
+        from config import get_project_paths
+        paths = get_project_paths("test-project")
+        self.assertTrue(paths["fabric_file"].name == "fabric.json")
+        self.assertIn("test-project", str(paths["project_dir"]))
+        self.assertTrue(paths["log_dir"].exists())
+
+    def test_list_projects_empty(self):
+        from config import list_projects
+        # May or may not have projects, but should not crash
+        result = list_projects()
+        self.assertIsInstance(result, list)
 
 
 if __name__ == "__main__":

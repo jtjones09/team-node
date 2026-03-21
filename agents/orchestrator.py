@@ -32,8 +32,8 @@ When in doubt about routing, assign to Planner/Researcher — they have the wide
 """
 
 
-def create_orchestrator() -> Agent:
-    llm = LLM(
+def create_orchestrator(llm_override=None) -> Agent:
+    llm = llm_override or LLM(
         model=ROUTING_MODEL,
         temperature=TEMPERATURES["orchestrator"],
     )
