@@ -18,11 +18,18 @@ class FabricBridge(MemoryInterface):
 
     Uses `intent fabric add`, `intent fabric search`, etc.
     The binary must be built: `cd ~/projects/intent-node && cargo build --release`
+
+    DECISION: All subprocess calls use cwd=intent-node directory so that
+    fabric data files (data/projects/{project}/fabric.json) resolve correctly
+    regardless of where TeamNode is run from.
     """
 
     def __init__(self, binary_path: str, project: str | None = None):
         self._binary = str(binary_path)
         self._project = project
+        # The working directory for all CLI calls is the intent-node repo root
+        # (two levels up from target/release/intent)
+        self._cwd = str(Path(binary_path).resolve().parent.parent.parent)
         self._verify_binary()
 
     def _verify_binary(self):
@@ -30,7 +37,8 @@ class FabricBridge(MemoryInterface):
         try:
             result = subprocess.run(
                 [self._binary, "--help"],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                cwd=self._cwd,
             )
             if result.returncode not in (0, 1):
                 raise RuntimeError(f"Fabric binary check failed: {result.stderr.strip()}")
@@ -46,7 +54,10 @@ class FabricBridge(MemoryInterface):
         if self._project:
             cmd.extend(["--project", self._project])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30,
+            cwd=self._cwd,
+        )
 
         if result.returncode != 0:
             stderr = result.stderr.strip()
@@ -112,6 +123,4 @@ class FabricBridge(MemoryInterface):
 
     def delete(self, node_id: str) -> bool:
         """Delete a node from the fabric."""
-        # DECISION: intent fabric CLI doesn't have a delete command yet.
-        # For now, this is a no-op that returns False.
         return False
