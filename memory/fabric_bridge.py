@@ -1,12 +1,12 @@
-"""Temporary JSON-based fabric bridge until intent-node CLI supports add/search commands.
+"""Ecphory Fabric bridge — calls intent-node CLI for real resonance retrieval.
 
-Reads and writes a JSON file in a format compatible with the Ecphory fabric's JsonFileStore.
-Uses simple text matching for search until CLI resonance is available.
+This replaces the temporary JSON file bridge. All memory operations now go
+through the Ecphory fabric via subprocess calls to `intent fabric` commands,
+getting real TF-IDF resonance scoring, confidence surfaces, and domain isolation.
 """
 
 import json
-import uuid
-from datetime import datetime, timezone
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -14,94 +14,104 @@ from memory.memory_interface import MemoryInterface
 
 
 class FabricBridge(MemoryInterface):
-    """JSON file-based memory backend that mirrors the Ecphory fabric node format.
+    """Calls the Ecphory fabric CLI for all memory operations.
 
-    This is a TEMPORARY bridge. When the intent-node CLI supports
-    `intent fabric add` and `intent fabric search`, swap to subprocess calls.
+    Uses `intent fabric add`, `intent fabric search`, etc.
+    The binary must be built: `cd ~/projects/intent-node && cargo build --release`
     """
 
-    def __init__(self, fabric_file: str | Path):
-        self._fabric_file = Path(fabric_file)
-        self._fabric_file.parent.mkdir(parents=True, exist_ok=True)
-        self._nodes: dict[str, dict[str, Any]] = {}
-        self._load()
+    def __init__(self, binary_path: str, project: str | None = None):
+        self._binary = str(binary_path)
+        self._project = project
+        self._verify_binary()
 
-    def _load(self):
-        """Load nodes from the JSON file."""
-        if self._fabric_file.exists() and self._fabric_file.stat().st_size > 0:
-            with open(self._fabric_file) as f:
-                data = json.load(f)
-            # DECISION: Support both list-of-nodes and dict-of-nodes formats.
-            # The Ecphory fabric uses a list; we index by ID for fast lookup.
-            if isinstance(data, list):
-                self._nodes = {n["id"]: n for n in data if "id" in n}
-            elif isinstance(data, dict):
-                if "nodes" in data:
-                    self._nodes = {n["id"]: n for n in data["nodes"] if "id" in n}
-                else:
-                    self._nodes = data
+    def _verify_binary(self):
+        """Check that the fabric binary exists and runs."""
+        try:
+            result = subprocess.run(
+                [self._binary, "--help"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode not in (0, 1):
+                raise RuntimeError(f"Fabric binary check failed: {result.stderr.strip()}")
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"Fabric binary not found at {self._binary}\n"
+                f"Build it: cd ~/projects/intent-node && cargo build --release"
+            )
 
-    def _save(self):
-        """Persist nodes to the JSON file."""
-        with open(self._fabric_file, "w") as f:
-            json.dump(list(self._nodes.values()), f, indent=2, default=str)
+    def _run(self, *args: str) -> dict[str, Any]:
+        """Run a fabric CLI command and return parsed JSON output."""
+        cmd = [self._binary, "fabric", *args, "--json"]
+        if self._project:
+            cmd.extend(["--project", self._project])
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            raise RuntimeError(f"Ecphory CLI error: {stderr}")
+
+        stdout = result.stdout.strip()
+        if not stdout:
+            return {}
+
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError:
+            for line in stdout.split("\n"):
+                line = line.strip()
+                if line.startswith("{") or line.startswith("["):
+                    try:
+                        return json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+            raise RuntimeError(f"Could not parse JSON from fabric output: {stdout}")
 
     def store(self, content: str, metadata: dict[str, Any] | None = None) -> str:
-        node_id = str(uuid.uuid4())
-        node = {
-            "id": node_id,
-            "content": content,
-            "metadata": metadata or {},
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        self._nodes[node_id] = node
-        self._save()
-        return node_id
+        """Store a node in the Ecphory fabric."""
+        meta = metadata or {}
+        domain = meta.get("domain", "")
+
+        args = ["add", "--want", content]
+        if domain:
+            args.extend(["--domain", domain])
+
+        result = self._run(*args)
+        return result.get("id", "")
 
     def retrieve(self, query: str, top_k: int = 5, domain: str | None = None) -> list[dict[str, Any]]:
-        """Search nodes by simple text matching.
+        """Search the fabric using resonance matching."""
+        args = ["search", "--query", query, "--top-k", str(top_k)]
+        if domain:
+            args.extend(["--domain", domain])
 
-        DECISION: Using keyword overlap scoring as bootstrap until
-        intent-node CLI resonance/embedding search is available.
-        """
-        query_words = set(query.lower().split())
-        results = []
+        result = self._run(*args)
+        nodes = result.get("nodes", [])
 
-        for node in self._nodes.values():
-            meta = node.get("metadata", {})
-            if domain and meta.get("domain") != domain:
-                continue
-
-            content_lower = node.get("content", "").lower()
-            content_words = set(content_lower.split())
-            meta_str = str(meta).lower()
-
-            # Score: fraction of query words found in content + metadata
-            matches = sum(1 for w in query_words if w in content_lower or w in meta_str)
-            score = matches / max(len(query_words), 1)
-
-            if score > 0:
-                results.append({
-                    "id": node["id"],
-                    "content": node.get("content", ""),
-                    "score": score,
-                    "metadata": meta,
-                })
-
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:top_k]
+        return [
+            {
+                "id": n.get("id", ""),
+                "content": n.get("content", ""),
+                "score": n.get("score", 0.0),
+                "metadata": n.get("metadata", {}),
+            }
+            for n in nodes
+        ]
 
     def list_domains(self) -> list[str]:
+        """List all domain namespaces in the fabric."""
+        result = self._run("list")
+        nodes = result.get("nodes", [])
         domains = set()
-        for node in self._nodes.values():
-            d = node.get("metadata", {}).get("domain")
+        for n in nodes:
+            d = n.get("domain", "")
             if d:
                 domains.add(d)
         return sorted(domains)
 
     def delete(self, node_id: str) -> bool:
-        if node_id in self._nodes:
-            del self._nodes[node_id]
-            self._save()
-            return True
+        """Delete a node from the fabric."""
+        # DECISION: intent fabric CLI doesn't have a delete command yet.
+        # For now, this is a no-op that returns False.
         return False
