@@ -3,7 +3,7 @@
 from crewai import Crew, Task, Process, LLM
 
 from config import (
-    LOG_DIR, FABRIC_DATA_FILE, TEMPERATURES,
+    LOG_DIR, FABRIC_BINARY, TEMPERATURES,
     OLLAMA_BASE_URL, OLLAMA_MODEL, get_project_paths,
 )
 from memory.fabric_bridge import FabricBridge
@@ -52,16 +52,14 @@ def build_crew(
     if use_ollama:
         llms = _make_ollama_llms(ollama_model or OLLAMA_MODEL)
 
-    # --- Memory backend (project-scoped or flat) ---
+    # --- Memory backend (Ecphory fabric via CLI) ---
     if project:
         paths = get_project_paths(project)
-        fabric_file = str(paths["fabric_file"])
         log_dir = str(paths["log_dir"])
     else:
-        fabric_file = str(FABRIC_DATA_FILE)
         log_dir = str(LOG_DIR)
 
-    memory_backend = FabricBridge(fabric_file)
+    memory_backend = FabricBridge(FABRIC_BINARY, project=project)
     logger = MarkdownLog(log_dir)
 
     # --- Perspective lenses (one per domain agent) ---
@@ -98,7 +96,6 @@ def build_crew(
     )
 
     # --- Assemble the crew ---
-    # CrewAI requires manager_agent to NOT be in the agents list
     crew = Crew(
         agents=[marketing, sales, engineer, architect, planner, security, data_analytics],
         tasks=[routing_task],
