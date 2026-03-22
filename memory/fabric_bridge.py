@@ -1,11 +1,12 @@
 """Ecphory Fabric bridge — calls intent-node CLI for real resonance retrieval.
 
-This replaces the temporary JSON file bridge. All memory operations now go
-through the Ecphory fabric via subprocess calls to `intent fabric` commands,
-getting real TF-IDF resonance scoring, confidence surfaces, and domain isolation.
+All memory operations go through the Ecphory fabric via subprocess calls
+to `intent fabric` commands, getting real TF-IDF resonance scoring,
+confidence surfaces, and domain isolation.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -19,17 +20,22 @@ class FabricBridge(MemoryInterface):
     Uses `intent fabric add`, `intent fabric search`, etc.
     The binary must be built: `cd ~/projects/intent-node && cargo build --release`
 
-    DECISION: All subprocess calls use cwd=intent-node directory so that
-    fabric data files (data/projects/{project}/fabric.json) resolve correctly
-    regardless of where TeamNode is run from.
+    Data directory resolution (matches intent-node CLI):
+    1. ECPHORY_DATA_DIR environment variable
+    2. ~/.ecphory/ (default)
+
+    Set ECPHORY_DATA_DIR in your environment to point all tools at the
+    same fabric, regardless of working directory.
     """
 
     def __init__(self, binary_path: str, project: str | None = None):
         self._binary = str(binary_path)
         self._project = project
-        # The working directory for all CLI calls is the intent-node repo root
-        # (two levels up from target/release/intent)
-        self._cwd = str(Path(binary_path).resolve().parent.parent.parent)
+        self._env = os.environ.copy()
+        # Ensure ECPHORY_DATA_DIR is set so the CLI uses an absolute path.
+        # If the user hasn't set it, default to ~/.ecphory/
+        if "ECPHORY_DATA_DIR" not in self._env:
+            self._env["ECPHORY_DATA_DIR"] = str(Path.home() / ".ecphory")
         self._verify_binary()
 
     def _verify_binary(self):
@@ -38,7 +44,7 @@ class FabricBridge(MemoryInterface):
             result = subprocess.run(
                 [self._binary, "--help"],
                 capture_output=True, text=True, timeout=10,
-                cwd=self._cwd,
+                env=self._env,
             )
             if result.returncode not in (0, 1):
                 raise RuntimeError(f"Fabric binary check failed: {result.stderr.strip()}")
@@ -56,7 +62,7 @@ class FabricBridge(MemoryInterface):
 
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30,
-            cwd=self._cwd,
+            env=self._env,
         )
 
         if result.returncode != 0:
