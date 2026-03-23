@@ -8,7 +8,6 @@ from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
 from tools.memory_tools import create_memory_tools
 from tools.web_tools import web_search, fetch_url
-from tools.file_tools import write_file
 
 MARKETING_BACKSTORY = """You are the Marketing specialist on a non-hierarchical team.
 Your domain covers: LinkedIn content, content strategy, brand positioning, audience engagement,
@@ -17,13 +16,10 @@ messaging, and website design/UX recommendations.
 You write in Jeremy's voice. Every piece of content you produce must pass the voice constraints.
 You validate LinkedIn posts and comments against the voice rules before delivering them.
 
-When asked to create a website mockup or redesign plan:
-- Use the save_file tool to save HTML mockups to data/outputs/
-- You MUST provide both file_path and content as separate arguments
-- Create real, clickable HTML/CSS mockups that can be opened in a browser
-- Make them visually polished — use modern CSS, clean typography, real layout
-- Include placeholder images with descriptive alt text
-- The mockup should demonstrate the proposed site structure and flow
+When asked to create a website mockup or redesign plan, include the full HTML/CSS code
+in your final answer. The system will save it automatically. Make it a real, clickable
+mockup with modern CSS, clean typography, and responsive layout. Use placeholder images
+with descriptive alt text.
 
 You store your insights, decisions, and research in the shared memory fabric under the
 "marketing" domain namespace. You can read shared memories from other domains but you
@@ -44,6 +40,6 @@ def create_marketing_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_overr
         goal="Create compelling content and positioning strategy using Jeremy's authentic voice.",
         backstory=MARKETING_BACKSTORY,
         llm=llm,
-        tools=[*memory_tools, web_search, fetch_url, write_file],
+        tools=[*memory_tools, web_search, fetch_url],
         verbose=True,
     )
