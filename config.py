@@ -11,6 +11,7 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
 def get_api_key() -> str:
+    """Get Anthropic API key from environment or persistent config."""
     key = os.environ.get("ANTHROPIC_API_KEY")
     if key:
         return key
@@ -22,6 +23,7 @@ def get_api_key() -> str:
 
 
 def save_api_key(key: str) -> Path:
+    """Save API key to ~/.config/teamnode/config.json with 0600 permissions."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     config = {}
     if CONFIG_FILE.exists():
@@ -36,17 +38,19 @@ def save_api_key(key: str) -> Path:
 
 ANTHROPIC_API_KEY = get_api_key()
 
+# --- Model Settings ---
 MODEL_SONNET = "anthropic/claude-sonnet-4-20250514"
 MODEL_OPUS = "anthropic/claude-opus-4-20250514"
 ROUTING_MODEL = MODEL_SONNET
 AGENT_MODEL = MODEL_SONNET
 REASONING_MODEL = MODEL_OPUS
 
+# --- Ollama Settings ---
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
 
+# --- Temperature Settings (per agent domain) ---
 TEMPERATURES = {
-    "orchestrator": 0.1,
     "engineer": 0.2,
     "architect": 0.2,
     "security": 0.2,
@@ -56,22 +60,27 @@ TEMPERATURES = {
     "planner_researcher": 0.5,
 }
 
+# --- Paths ---
 PROJECT_ROOT = Path(__file__).parent
 DATA_DIR = PROJECT_ROOT / "data"
 PROJECTS_DIR = DATA_DIR / "projects"
 LOG_DIR = DATA_DIR / "logs"
 
+# Ecphory fabric binary — the compiled intent-node CLI
+# Override with ECPHORY_BINARY env var if your layout differs
 FABRIC_BINARY = os.environ.get(
     "ECPHORY_BINARY",
     str(Path.home() / "projects" / "intent-node" / "target" / "release" / "intent")
 )
 
+# Ensure data directories exist
 DATA_DIR.mkdir(exist_ok=True)
 PROJECTS_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_project_paths(project: str) -> dict[str, Path]:
+    """Get scoped paths for a specific project."""
     project_dir = PROJECTS_DIR / project
     project_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = project_dir / "logs"
@@ -80,6 +89,7 @@ def get_project_paths(project: str) -> dict[str, Path]:
 
 
 def list_projects() -> list[str]:
+    """List all available projects."""
     if not PROJECTS_DIR.exists():
         return []
     return sorted(d.name for d in PROJECTS_DIR.iterdir() if d.is_dir())
