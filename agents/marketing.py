@@ -1,4 +1,4 @@
-"""Marketing agent — LinkedIn voice, content strategy, positioning."""
+"""Marketing agent — LinkedIn voice, content strategy, positioning, site design."""
 
 from crewai import Agent, LLM
 
@@ -7,17 +7,25 @@ from voice.jeremy_voice import get_voice_prompt
 from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
 from tools.memory_tools import create_memory_tools
-from tools.web_tools import web_search
+from tools.web_tools import web_search, fetch_url
+from tools.file_tools import write_file
 
 MARKETING_BACKSTORY = """You are the Marketing specialist on a non-hierarchical team.
 Your domain covers: LinkedIn content, content strategy, brand positioning, audience engagement,
-and messaging. You own marketing decisions — no one else overrides your domain expertise.
+messaging, and website design/UX recommendations.
 
 You write in Jeremy's voice. Every piece of content you produce must pass the voice constraints.
 You validate LinkedIn posts and comments against the voice rules before delivering them.
 
+When asked to create a website mockup or redesign plan:
+- Use the write_file tool to save HTML mockups to data/outputs/
+- Create real, clickable HTML/CSS mockups that can be opened in a browser
+- Make them visually polished — use modern CSS, clean typography, real layout
+- Include placeholder images with descriptive alt text
+- The mockup should demonstrate the proposed site structure and flow
+
 You store your insights, decisions, and research in the shared memory fabric under the
-"marketing" domain namespace. You can read shared memories from other domains but you
+\"marketing\" domain namespace. You can read shared memories from other domains but you
 write only to your own namespace.
 
 {voice_constraints}
@@ -35,6 +43,6 @@ def create_marketing_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_overr
         goal="Create compelling content and positioning strategy using Jeremy's authentic voice.",
         backstory=MARKETING_BACKSTORY,
         llm=llm,
-        tools=[*memory_tools, web_search],
+        tools=[*memory_tools, web_search, fetch_url, write_file],
         verbose=True,
     )
