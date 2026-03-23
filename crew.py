@@ -1,10 +1,10 @@
-"""Crew assembly — wires up all agents, lenses, memory, and process config.
+"""Crew assembly — wires up agents, lenses, memory, and process config.
 
-DECISION: Using Process.sequential with a Python routing function instead of
-Process.hierarchical with manager_agent. CrewAI's hierarchical delegation has
-a known bug where the manager can only see itself as a coworker. The routing
-function classifies the goal and assigns tasks to the right agents directly.
-This is actually better — no LLM tokens wasted on routing decisions.
+Token optimization:
+- Only instantiate agents that will actually run (not all 7)
+- Planner uses Haiku (cheap) for research/fetch tasks
+- Domain agents use Sonnet for quality output
+- MAX_ITER caps runaway tool retry loops
 """
 
 from crewai import Crew, Task, Process, LLM
@@ -12,7 +12,7 @@ from crewai import Crew, Task, Process, LLM
 from config import (
     LOG_DIR, FABRIC_BINARY, TEMPERATURES,
     OLLAMA_BASE_URL, OLLAMA_MODEL, get_project_paths,
-    AGENT_MODEL,
+    AGENT_MODEL, MAX_ITER, MAX_RPM,
 )
 from memory.fabric_bridge import FabricBridge
 from memory.markdown_log import MarkdownLog
@@ -42,7 +42,8 @@ DOMAIN_KEYWORDS = {
     "marketing": [
         "linkedin", "article", "post", "comment", "content", "brand", "positioning",
         "audience", "messaging", "thought leadership", "blog", "draft", "write",
-        "social media", "campaign", "newsletter",
+        "social media", "campaign", "newsletter", "website", "mockup", "redesign",
+        "seo", "site",
     ],
     "sales": [
         "outreach", "pipeline", "partnership", "prospect", "deal", "pitch",
@@ -51,7 +52,7 @@ DOMAIN_KEYWORDS = {
     "engineer": [
         "code", "build", "implement", "debug", "script", "function", "api",
         "test", "deploy", "refactor", "fix", "bug", "compile", "run", "install",
-        "rust", "python", "typescript", "docker", "cli",
+        "rust", "python", "typescript", "docker", "cli", "technical",
     ],
     "architect": [
         "design", "architecture", "system", "spec", "specification", "trade-off",
@@ -65,15 +66,15 @@ DOMAIN_KEYWORDS = {
         "metric", "data", "analysis", "benchmark", "evidence", "competitive",
         "research data", "statistics", "trend", "performance", "dashboard",
     ],
-    "planner_researcher": [
-        "research", "plan", "strategy", "roadmap", "compare", "evaluate",
-        "synthesize", "summary", "overview", "investigate", "explore",
-    ],
 }
 
 
 def route_goal(goal: str) -> list[str]:
-    """Route a goal to the appropriate agent domain(s) using keyword matching."""
+    """Route a goal to the appropriate agent domain(s) using keyword matching.
+
+    Always includes planner_researcher for context gathering.
+    Returns: list of domain names, planner_researcher always last (runs first in sequential).
+    """
     goal_lower = goal.lower()
     scores = {}
 
@@ -86,11 +87,20 @@ def route_goal(goal: str) -> list[str]:
         return ["planner_researcher"]
 
     sorted_domains = sorted(scores, key=scores.get, reverse=True)
-    result = [sorted_domains[0]]
-    if "planner_researcher" not in result:
-        result.append("planner_researcher")
+    primary = sorted_domains[0]
+    return ["planner_researcher", primary]
 
-    return result
+
+# Agent factory lookup
+AGENT_FACTORIES = {
+    "marketing": create_marketing_agent,
+    "sales": create_sales_agent,
+    "engineer": create_engineer_agent,
+    "architect": create_architect_agent,
+    "planner_researcher": create_planner_researcher_agent,
+    "security": create_security_agent,
+    "data_analytics": create_data_analytics_agent,
+}
 
 
 def build_crew(
@@ -100,7 +110,7 @@ def build_crew(
     ollama_model: str | None = None,
     project: str | None = None,
 ) -> Crew:
-    """Assemble the team with Python-routed task assignment."""
+    """Assemble the team with only the agents that will actually run."""
     llms = {}
     if use_ollama:
         llms = _make_ollama_llms(ollama_model or OLLAMA_MODEL)
@@ -114,66 +124,59 @@ def build_crew(
     memory_backend = FabricBridge(FABRIC_BINARY, project=project)
     logger = MarkdownLog(log_dir)
 
-    lenses = {
-        "marketing": PerspectiveLens(memory_backend, "marketing"),
-        "sales": PerspectiveLens(memory_backend, "sales"),
-        "engineer": PerspectiveLens(memory_backend, "engineer"),
-        "architect": PerspectiveLens(memory_backend, "architect"),
-        "planner_researcher": PerspectiveLens(memory_backend, "planner_researcher"),
-        "security": PerspectiveLens(memory_backend, "security"),
-        "data_analytics": PerspectiveLens(memory_backend, "data_analytics"),
-    }
-
-    agents = {
-        "marketing": create_marketing_agent(lenses["marketing"], logger, llm_override=llms.get("marketing")),
-        "sales": create_sales_agent(lenses["sales"], logger, llm_override=llms.get("sales")),
-        "engineer": create_engineer_agent(lenses["engineer"], logger, llm_override=llms.get("engineer")),
-        "architect": create_architect_agent(lenses["architect"], logger, llm_override=llms.get("architect")),
-        "planner_researcher": create_planner_researcher_agent(lenses["planner_researcher"], logger, llm_override=llms.get("planner_researcher")),
-        "security": create_security_agent(lenses["security"], logger, llm_override=llms.get("security")),
-        "data_analytics": create_data_analytics_agent(lenses["data_analytics"], logger, llm_override=llms.get("data_analytics")),
-    }
-
     routed_domains = route_goal(goal)
 
     if verbose:
         print(f"\n  Routing: {goal[:80]}...")
-        print(f"  Assigned to: {', '.join(routed_domains)}\n")
+        print(f"  Assigned to: {', '.join(routed_domains)}")
+        print(f"  Max iterations per agent: {MAX_ITER}\n")
+
+    # Only create the agents we actually need
+    active_agents = {}
+    for domain in routed_domains:
+        lens = PerspectiveLens(memory_backend, domain)
+        factory = AGENT_FACTORIES[domain]
+        active_agents[domain] = factory(lens, logger, llm_override=llms.get(domain))
 
     tasks = []
 
-    if "planner_researcher" in routed_domains:
+    # Planner always runs first for context
+    if "planner_researcher" in active_agents:
         research_task = Task(
             description=(
                 f"Research and gather relevant context for the following goal. "
-                f"Search the team's shared memory fabric for any prior knowledge, "
-                f"decisions, or related work. Provide a context briefing for the "
-                f"primary agent.\n\nGoal: {goal}"
+                f"Search the team's shared memory fabric FIRST for any prior knowledge. "
+                f"If you find existing analysis, use it instead of re-fetching. "
+                f"Only fetch URLs or search the web if needed.\n\nGoal: {goal}"
             ),
-            expected_output="A context briefing with relevant prior knowledge, research findings, and any related team history.",
-            agent=agents["planner_researcher"],
+            expected_output="A context briefing with relevant prior knowledge and research findings.",
+            agent=active_agents["planner_researcher"],
         )
         tasks.append(research_task)
 
-    primary_domain = routed_domains[0]
-    if primary_domain != "planner_researcher":
-        primary_task = Task(
-            description=(
-                f"Execute the following goal using your domain expertise. "
-                f"Use the context provided by the Planner/Researcher. "
-                f"Store your output and any decisions in the team's shared memory.\n\n"
-                f"Goal: {goal}"
-            ),
-            expected_output="A complete, high-quality deliverable addressing the goal.",
-            agent=agents[primary_domain],
-        )
-        tasks.append(primary_task)
+    # Primary domain agent runs second
+    for domain in routed_domains:
+        if domain != "planner_researcher":
+            primary_task = Task(
+                description=(
+                    f"Execute the following goal using your domain expertise. "
+                    f"Use the context provided by the Planner/Researcher. "
+                    f"Store your output and any decisions in the team's shared memory. "
+                    f"If asked to create HTML, include it directly in your response.\n\n"
+                    f"Goal: {goal}"
+                ),
+                expected_output="A complete, high-quality deliverable addressing the goal.",
+                agent=active_agents[domain],
+            )
+            tasks.append(primary_task)
 
     crew = Crew(
-        agents=list(agents.values()),
+        agents=list(active_agents.values()),
         tasks=tasks,
         process=Process.sequential,
         verbose=verbose,
+        max_iter=MAX_ITER,
+        max_rpm=MAX_RPM,
     )
 
     return crew

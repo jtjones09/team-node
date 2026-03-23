@@ -39,11 +39,20 @@ def save_api_key(key: str) -> Path:
 ANTHROPIC_API_KEY = get_api_key()
 
 # --- Model Settings ---
+# Cost tiers:
+#   Haiku:  $0.25/$1.25 per MTok (input/output) — research, fetching, simple tasks
+#   Sonnet: $3/$15 per MTok — domain expertise, creative writing, complex analysis
+#   Opus:   $15/$75 per MTok — reserved for multi-step reasoning, architecture
+#
+# Default: Sonnet for domain agents, Haiku for Planner (mostly fetch+summarize).
+# Override with TEAMNODE_AGENT_MODEL and TEAMNODE_PLANNER_MODEL env vars.
+MODEL_HAIKU = "anthropic/claude-haiku-4-5-20251001"
 MODEL_SONNET = "anthropic/claude-sonnet-4-20250514"
 MODEL_OPUS = "anthropic/claude-opus-4-20250514"
-ROUTING_MODEL = MODEL_SONNET
-AGENT_MODEL = MODEL_SONNET
-REASONING_MODEL = MODEL_OPUS
+
+AGENT_MODEL = os.environ.get("TEAMNODE_AGENT_MODEL", MODEL_SONNET)
+PLANNER_MODEL = os.environ.get("TEAMNODE_PLANNER_MODEL", MODEL_HAIKU)
+REASONING_MODEL = os.environ.get("TEAMNODE_REASONING_MODEL", MODEL_SONNET)
 
 # --- Ollama Settings ---
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -57,8 +66,12 @@ TEMPERATURES = {
     "data_analytics": 0.2,
     "marketing": 0.3,
     "sales": 0.3,
-    "planner_researcher": 0.5,
+    "planner_researcher": 0.3,
 }
+
+# --- CrewAI Limits ---
+MAX_ITER = int(os.environ.get("TEAMNODE_MAX_ITER", "15"))
+MAX_RPM = int(os.environ.get("TEAMNODE_MAX_RPM", "10"))
 
 # --- Paths ---
 PROJECT_ROOT = Path(__file__).parent
