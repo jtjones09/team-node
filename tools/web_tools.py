@@ -1,19 +1,18 @@
-"""Web search tool with cross-validation support.
+"""Web tools: search (Brave) + fetch (read any URL) + cross-validation.
 
-Primary: Brave Search API (own independent index)
-Secondary: Pluggable — add SearXNG, Google CSE, or any future source.
+Primary search: Brave Search API (own independent index)
+Secondary: Pluggable — set SECONDARY_SEARCH_URL for SearXNG (future)
 
-When two sources are configured, results appearing in both are marked
-[verified] with higher confidence. The Ecphory pattern: resonance across
-independent signals, confidence derived from convergence.
+fetch_url reads any webpage and returns its text content. This lets agents
+analyze websites, read articles, and pull context from URLs mentioned in goals.
 
 API Keys:
   Brave: BRAVE_SEARCH_API_KEY (brave.com/search/api, $5 free credits/month)
-  Secondary: Set SECONDARY_SEARCH_URL for SearXNG or similar (future)
 """
 
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,7 +23,6 @@ BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
 
 
 def _get_key(env_var: str, config_key: str) -> str:
-    """Get API key from environment or config file."""
     key = os.environ.get(env_var)
     if key:
         return key
@@ -37,7 +35,6 @@ def _get_key(env_var: str, config_key: str) -> str:
 
 
 def _search_brave(query: str, count: int) -> list[dict]:
-    """Search using Brave Search API."""
     api_key = _get_key("BRAVE_SEARCH_API_KEY", "brave_search_api_key")
     if not api_key:
         return []
@@ -64,11 +61,6 @@ def _search_brave(query: str, count: int) -> list[dict]:
 
 
 def _search_secondary(query: str, count: int) -> list[dict]:
-    """Search using secondary source (SearXNG or similar).
-
-    Configure SECONDARY_SEARCH_URL to enable.
-    Expected: SearXNG JSON API at http://host:port/search?q=...&format=json
-    """
     base_url = os.environ.get("SECONDARY_SEARCH_URL", "")
     if not base_url:
         return []
@@ -95,14 +87,12 @@ def _search_secondary(query: str, count: int) -> list[dict]:
 
 
 def _normalize_url(url: str) -> str:
-    """Normalize URL for comparison."""
     parsed = urlparse(url.lower().rstrip("/"))
     host = parsed.netloc.replace("www.", "")
     return f"{host}{parsed.path}"
 
 
 def _cross_validate(primary: list[dict], secondary: list[dict]) -> list[dict]:
-    """Cross-validate results. Convergent results get higher confidence."""
     secondary_urls = {}
     for r in secondary:
         norm = _normalize_url(r["url"])
@@ -134,6 +124,16 @@ def _cross_validate(primary: list[dict], secondary: list[dict]) -> list[dict]:
 
     validated.sort(key=lambda x: (0 if x["confidence"] == "verified" else 1))
     return validated
+
+
+def _strip_html(html: str) -> str:
+    html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', html)
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    text = text.replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
+    return text
 
 
 @tool("Web Search")
@@ -175,3 +175,49 @@ def web_search(query: str, max_results: int = 5) -> str:
             tag = ""
         lines.append(f"**{r['title']}**{tag}\n{r['url']}\n{r['description']}\n")
     return "\n".join(lines)
+
+
+@tool("Fetch URL")
+def fetch_url(url: str) -> str:
+    """Fetch and read the text content of any webpage.
+
+    Use this to analyze a website, read an article, or pull content from
+    a URL mentioned in the goal. Returns the page text (HTML stripped).
+
+    Args:
+        url: The full URL to fetch (must include https:// or http://).
+    """
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    try:
+        response = requests.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; TeamNode/1.0; +https://hotashstudios.com)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=15,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+
+        content_type = response.headers.get("Content-Type", "")
+        if "text/html" not in content_type and "text/plain" not in content_type:
+            return f"Cannot read this content type: {content_type}"
+
+        text = _strip_html(response.text)
+
+        if len(text) > 4000:
+            text = text[:4000] + "\n\n[...truncated, page continues...]"
+
+        return f"Content from {url}:\n\n{text}"
+
+    except requests.exceptions.ConnectionError:
+        return f"Could not connect to {url}"
+    except requests.exceptions.Timeout:
+        return f"Request to {url} timed out"
+    except requests.exceptions.HTTPError as e:
+        return f"HTTP error fetching {url}: {e.response.status_code}"
+    except Exception as e:
+        return f"Error fetching {url}: {e}"

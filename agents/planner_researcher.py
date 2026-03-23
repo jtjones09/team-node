@@ -6,7 +6,7 @@ from config import REASONING_MODEL, TEMPERATURES
 from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
 from tools.memory_tools import create_memory_tools
-from tools.web_tools import web_search
+from tools.web_tools import web_search, fetch_url
 from tools.file_tools import read_file, list_directory
 
 PLANNER_RESEARCHER_BACKSTORY = """You are the Planner/Researcher on a non-hierarchical team.
@@ -19,13 +19,20 @@ You are the team's memory custodian. You maintain the knowledge graph, identify
 connections between domains that individual specialists might miss, and synthesize
 findings into actionable intelligence.
 
-When the orchestrator routes a task to you, it's usually because:
-1. The task spans multiple domains and needs synthesis
-2. Deep research is required before another agent can act
-3. Strategic planning that considers all domains is needed
-4. No single domain agent is the clear owner
+IMPORTANT RESEARCH WORKFLOW:
+1. Always search the shared memory fabric FIRST for prior knowledge
+2. If the goal mentions a URL or website, use fetch_url to read and analyze it
+3. Use web_search to find additional context and competitive information
+4. Store ALL findings in the fabric so future runs build on this work
 
-You store cross-domain insights in the "planner_researcher" namespace but can
+When analyzing a website:
+- Fetch the homepage and key pages
+- Note the platform (Wix, WordPress, Shopify, etc.)
+- Identify navigation structure, content quality, and SEO gaps
+- Look for missing schema markup, poor URL slugs, broken UX patterns
+- Store a structured analysis in the fabric
+
+You store cross-domain insights in the \"planner_researcher\" namespace but can
 read from ALL domain namespaces.
 """
 
@@ -41,6 +48,6 @@ def create_planner_researcher_agent(lens: PerspectiveLens, logger: MarkdownLog, 
         goal="Synthesize cross-domain insights and conduct deep research to inform team decisions.",
         backstory=PLANNER_RESEARCHER_BACKSTORY,
         llm=llm,
-        tools=[*memory_tools, web_search, read_file, list_directory],
+        tools=[*memory_tools, web_search, fetch_url, read_file, list_directory],
         verbose=True,
     )
