@@ -1,18 +1,19 @@
-"""Web tools: search (Brave) + fetch (read any URL) + cross-validation.
+"""Web tools: search (Brave) + fetch (Jina Reader) + cross-validation.
 
 Primary search: Brave Search API (own independent index)
 Secondary: Pluggable — set SECONDARY_SEARCH_URL for SearXNG (future)
 
-fetch_url reads any webpage and returns its text content. This lets agents
-analyze websites, read articles, and pull context from URLs mentioned in goals.
+fetch_url uses Jina Reader API (r.jina.ai) to read any webpage — renders
+JavaScript, strips HTML, returns clean LLM-friendly markdown. Free, no API
+key needed. Works on Wix, React, Angular, any JS-rendered site.
 
 API Keys:
   Brave: BRAVE_SEARCH_API_KEY (brave.com/search/api, $5 free credits/month)
+  Jina: None required (free tier, prepend r.jina.ai/ to any URL)
 """
 
 import json
 import os
-import re
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -20,6 +21,7 @@ import requests
 from crewai.tools import tool
 
 BRAVE_API_URL = "https://api.search.brave.com/res/v1/web/search"
+JINA_READER_PREFIX = "https://r.jina.ai/"
 
 
 def _get_key(env_var: str, config_key: str) -> str:
@@ -126,16 +128,6 @@ def _cross_validate(primary: list[dict], secondary: list[dict]) -> list[dict]:
     return validated
 
 
-def _strip_html(html: str) -> str:
-    html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', ' ', html)
-    text = re.sub(r'\s+', ' ', text).strip()
-    text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-    text = text.replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
-    return text
-
-
 @tool("Web Search")
 def web_search(query: str, max_results: int = 5) -> str:
     """Search the web for current information.
@@ -179,45 +171,45 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 @tool("Fetch URL")
 def fetch_url(url: str) -> str:
-    """Fetch and read the text content of any webpage.
+    """Fetch and read a webpage using Jina Reader. Renders JavaScript,
+    strips HTML, returns clean markdown. Works on any site including
+    Wix, React, Angular, and other JS-heavy frameworks.
 
-    Use this to analyze a website, read an article, or pull content from
-    a URL mentioned in the goal. Returns the page text (HTML stripped).
+    Use this to analyze websites, read articles, or pull content from
+    URLs mentioned in the goal.
 
     Args:
-        url: The full URL to fetch (must include https:// or http://).
+        url: The URL to fetch (e.g. https://www.example.com).
     """
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
+    jina_url = f"{JINA_READER_PREFIX}{url}"
+
     try:
         response = requests.get(
-            url,
+            jina_url,
             headers={
-                "User-Agent": "Mozilla/5.0 (compatible; TeamNode/1.0; +https://hotashstudios.com)",
-                "Accept": "text/html,application/xhtml+xml",
+                "Accept": "text/plain",
+                "X-Return-Format": "markdown",
             },
-            timeout=15,
-            allow_redirects=True,
+            timeout=30,
         )
         response.raise_for_status()
 
-        content_type = response.headers.get("Content-Type", "")
-        if "text/html" not in content_type and "text/plain" not in content_type:
-            return f"Cannot read this content type: {content_type}"
+        text = response.text.strip()
 
-        text = _strip_html(response.text)
+        if len(text) > 6000:
+            text = text[:6000] + "\n\n[...truncated, page continues...]"
 
-        if len(text) > 4000:
-            text = text[:4000] + "\n\n[...truncated, page continues...]"
+        if not text:
+            return f"No content extracted from {url}"
 
         return f"Content from {url}:\n\n{text}"
 
-    except requests.exceptions.ConnectionError:
-        return f"Could not connect to {url}"
     except requests.exceptions.Timeout:
-        return f"Request to {url} timed out"
+        return f"Request to {url} timed out (Jina Reader took too long)"
     except requests.exceptions.HTTPError as e:
-        return f"HTTP error fetching {url}: {e.response.status_code}"
+        return f"Error fetching {url}: HTTP {e.response.status_code}"
     except Exception as e:
         return f"Error fetching {url}: {e}"
