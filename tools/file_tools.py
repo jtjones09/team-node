@@ -1,4 +1,8 @@
-"""File system operation tools."""
+"""File system operation tools (read-only).
+
+write_file removed — CrewAI cannot handle large content arguments.
+HTML mockups are auto-extracted from agent output by main.py instead.
+"""
 
 from pathlib import Path
 
@@ -18,25 +22,6 @@ def read_file(file_path: str) -> str:
     if path.stat().st_size > 100_000:
         return f"File too large ({path.stat().st_size} bytes)."
     return path.read_text()
-
-
-@tool("Save File")
-def write_file(file_path: str, content: str) -> str:
-    """Save content to a file. Creates parent directories if needed.
-
-    IMPORTANT: You must provide BOTH file_path AND content as separate arguments.
-
-    Args:
-        file_path: Where to save the file (e.g. data/outputs/mockup.html).
-        content: The full content to write to the file.
-    """
-    try:
-        path = Path(file_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-        return f"Saved {len(content)} bytes to {file_path}"
-    except Exception as e:
-        return f"Error saving file: {e}"
 
 
 @tool("List Directory")
