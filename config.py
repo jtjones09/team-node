@@ -39,20 +39,20 @@ def save_api_key(key: str) -> Path:
 ANTHROPIC_API_KEY = get_api_key()
 
 # --- Model Settings ---
-# Cost tiers:
-#   Haiku:  $0.25/$1.25 per MTok (input/output) — research, fetching, simple tasks
-#   Sonnet: $3/$15 per MTok — domain expertise, creative writing, complex analysis
-#   Opus:   $15/$75 per MTok — reserved for multi-step reasoning, architecture
+# Cost tiers (March 2026):
+#   Haiku:  $0.25/$1.25 per MTok (input/output)
+#   Sonnet: $3/$15 per MTok
+#   Opus:   $15/$75 per MTok
 #
-# Default: Sonnet for domain agents, Haiku for Planner (mostly fetch+summarize).
-# Override with TEAMNODE_AGENT_MODEL and TEAMNODE_PLANNER_MODEL env vars.
+# Models are selected dynamically by the router (routing/model_router.py)
+# based on task complexity. These are the available models:
 MODEL_HAIKU = "anthropic/claude-haiku-4-5-20251001"
 MODEL_SONNET = "anthropic/claude-sonnet-4-20250514"
 MODEL_OPUS = "anthropic/claude-opus-4-20250514"
 
-AGENT_MODEL = os.environ.get("TEAMNODE_AGENT_MODEL", MODEL_SONNET)
-PLANNER_MODEL = os.environ.get("TEAMNODE_PLANNER_MODEL", MODEL_HAIKU)
-REASONING_MODEL = os.environ.get("TEAMNODE_REASONING_MODEL", MODEL_SONNET)
+# Override defaults via env vars if needed
+DEFAULT_AGENT_MODEL = os.environ.get("TEAMNODE_AGENT_MODEL", MODEL_SONNET)
+DEFAULT_PLANNER_MODEL = os.environ.get("TEAMNODE_PLANNER_MODEL", MODEL_SONNET)
 
 # --- Ollama Settings ---
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -79,8 +79,6 @@ DATA_DIR = PROJECT_ROOT / "data"
 PROJECTS_DIR = DATA_DIR / "projects"
 LOG_DIR = DATA_DIR / "logs"
 
-# Ecphory fabric binary — the compiled intent-node CLI
-# Override with ECPHORY_BINARY env var if your layout differs
 FABRIC_BINARY = os.environ.get(
     "ECPHORY_BINARY",
     str(Path.home() / "projects" / "intent-node" / "target" / "release" / "intent")

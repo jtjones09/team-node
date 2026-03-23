@@ -1,19 +1,24 @@
 """Crew assembly — wires up agents, lenses, memory, and process config.
 
 Token optimization:
+- Dynamic model selection per agent via routing/model_router.py
 - Only instantiate agents that will actually run (not all 7)
-- Planner uses Haiku (cheap) for research/fetch tasks
-- Domain agents use Sonnet for quality output
+- Usage tracking on every crew run
 - MAX_ITER caps runaway tool retry loops
 """
+
+import time
 
 from crewai import Crew, Task, Process, LLM
 
 from config import (
     LOG_DIR, FABRIC_BINARY, TEMPERATURES,
     OLLAMA_BASE_URL, OLLAMA_MODEL, get_project_paths,
-    AGENT_MODEL, MAX_ITER, MAX_RPM,
+    MAX_ITER, MAX_RPM,
 )
+from routing.model_router import route_model, ModelTier
+from tracking.usage_tracker import UsageTracker
+from tracking.crew_callbacks import log_crew_run
 from memory.fabric_bridge import FabricBridge
 from memory.markdown_log import MarkdownLog
 from lenses.perspective import PerspectiveLens
@@ -70,11 +75,7 @@ DOMAIN_KEYWORDS = {
 
 
 def route_goal(goal: str) -> list[str]:
-    """Route a goal to the appropriate agent domain(s) using keyword matching.
-
-    Always includes planner_researcher for context gathering.
-    Returns: list of domain names, planner_researcher always last (runs first in sequential).
-    """
+    """Route a goal to the appropriate agent domain(s) using keyword matching."""
     goal_lower = goal.lower()
     scores = {}
 
@@ -109,8 +110,9 @@ def build_crew(
     use_ollama: bool = False,
     ollama_model: str | None = None,
     project: str | None = None,
+    force_tier: ModelTier | None = None,
 ) -> Crew:
-    """Assemble the team with only the agents that will actually run."""
+    """Assemble the team with dynamic model routing per agent."""
     llms = {}
     if use_ollama:
         llms = _make_ollama_llms(ollama_model or OLLAMA_MODEL)
@@ -124,18 +126,51 @@ def build_crew(
     memory_backend = FabricBridge(FABRIC_BINARY, project=project)
     logger = MarkdownLog(log_dir)
 
+    # Check if fabric has existing context for this goal
+    has_context = False
+    try:
+        existing = memory_backend.retrieve(goal[:100], top_k=3)
+        has_context = len(existing) > 0
+    except Exception:
+        pass
+
     routed_domains = route_goal(goal)
+
+    # Dynamic model routing per agent
+    routing_decisions = {}
+    for domain in routed_domains:
+        decision = route_model(
+            goal=goal,
+            domain=domain,
+            has_fabric_context=has_context,
+            force_tier=force_tier,
+        )
+        routing_decisions[domain] = decision
 
     if verbose:
         print(f"\n  Routing: {goal[:80]}...")
         print(f"  Assigned to: {', '.join(routed_domains)}")
-        print(f"  Max iterations per agent: {MAX_ITER}\n")
+        print(f"  Fabric context: {'yes' if has_context else 'no (first run)'}")
+        print(f"  Max iterations: {MAX_ITER}")
+        print(f"  Model routing:")
+        for domain, decision in routing_decisions.items():
+            print(f"    {domain}: {decision.tier.value} ({decision.model.split('/')[-1]}) — {decision.reason}")
+        print()
 
     # Only create the agents we actually need
     active_agents = {}
     for domain in routed_domains:
         lens = PerspectiveLens(memory_backend, domain)
         factory = AGENT_FACTORIES[domain]
+
+        # Use routed model unless Ollama override
+        if domain not in llms and not use_ollama:
+            decision = routing_decisions[domain]
+            llms[domain] = LLM(
+                model=decision.model,
+                temperature=TEMPERATURES.get(domain, 0.3),
+            )
+
         active_agents[domain] = factory(lens, logger, llm_override=llms.get(domain))
 
     tasks = []
@@ -178,5 +213,15 @@ def build_crew(
         max_iter=MAX_ITER,
         max_rpm=MAX_RPM,
     )
+
+    # Attach routing metadata for post-run tracking
+    crew._teamnode_meta = {
+        "project": project or "",
+        "goal": goal,
+        "domains": routed_domains,
+        "models": {d: r.model for d, r in routing_decisions.items()},
+        "tiers": {d: r.tier.value for d, r in routing_decisions.items()},
+        "has_context": has_context,
+    }
 
     return crew

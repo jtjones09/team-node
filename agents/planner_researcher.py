@@ -2,7 +2,7 @@
 
 from crewai import Agent, LLM
 
-from config import PLANNER_MODEL, TEMPERATURES
+from config import DEFAULT_PLANNER_MODEL, TEMPERATURES
 from lenses.perspective import PerspectiveLens
 from memory.markdown_log import MarkdownLog
 from tools.memory_tools import create_memory_tools
@@ -35,7 +35,7 @@ read from ALL domain namespaces.
 
 def create_planner_researcher_agent(lens: PerspectiveLens, logger: MarkdownLog, llm_override=None) -> Agent:
     llm = llm_override or LLM(
-        model=PLANNER_MODEL,
+        model=DEFAULT_PLANNER_MODEL,
         temperature=TEMPERATURES["planner_researcher"],
     )
     memory_tools = create_memory_tools(lens, logger)
