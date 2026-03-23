@@ -1,7 +1,9 @@
 """CLI entry point for TeamNode."""
 
 import argparse
+import re
 import sys
+from pathlib import Path
 
 from config import get_api_key, save_api_key, list_projects
 
@@ -17,6 +19,34 @@ def run_setup():
     path = save_api_key(key)
     print(f"API key saved to {path} (permissions: 0600)")
     print("You can now run team-node without setting ANTHROPIC_API_KEY.")
+
+
+def _extract_and_save_html(result_text: str, project: str | None) -> str | None:
+    """If the result contains HTML, save it to data/outputs/.
+
+    Returns the saved file path, or None if no HTML was found.
+    """
+    text = str(result_text)
+
+    # Look for HTML content in the result
+    html_match = re.search(r'(<!DOCTYPE html>.*?</html>)', text, re.DOTALL | re.IGNORECASE)
+    if not html_match:
+        html_match = re.search(r'(<html.*?</html>)', text, re.DOTALL | re.IGNORECASE)
+    if not html_match:
+        return None
+
+    html_content = html_match.group(1)
+    if len(html_content) < 200:
+        return None  # Too short to be a real mockup
+
+    # Save to data/outputs/
+    output_dir = Path("data/outputs")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = f"{project}-mockup.html" if project else "mockup.html"
+    output_path = output_dir / filename
+    output_path.write_text(html_content)
+    return str(output_path)
 
 
 def main():
@@ -78,7 +108,7 @@ def main():
             for p in projects:
                 print(f"  - {p}")
         else:
-            print("No projects found. Create one with: --project <name> --goal <task>")
+            print("No projects found. Create one with: --project <n> --goal <task>")
         return
 
     if args.history:
@@ -126,6 +156,12 @@ def main():
     print("TEAM RESULT")
     print("=" * 60)
     print(result)
+
+    # Auto-save HTML mockups if the result contains HTML
+    saved_path = _extract_and_save_html(str(result), args.project)
+    if saved_path:
+        print(f"\n  HTML mockup saved to: {saved_path}")
+        print(f"  Open in browser: file://{Path(saved_path).resolve()}")
 
 
 if __name__ == "__main__":
