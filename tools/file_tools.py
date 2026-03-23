@@ -20,18 +20,23 @@ def read_file(file_path: str) -> str:
     return path.read_text()
 
 
-@tool("Write File")
+@tool("Save File")
 def write_file(file_path: str, content: str) -> str:
-    """Write content to a file, creating parent directories if needed.
+    """Save content to a file. Creates parent directories if needed.
+
+    IMPORTANT: You must provide BOTH file_path AND content as separate arguments.
 
     Args:
-        file_path: Path to the file to write.
-        content: Content to write to the file.
+        file_path: Where to save the file (e.g. data/outputs/mockup.html).
+        content: The full content to write to the file.
     """
-    path = Path(file_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    return f"Written {len(content)} bytes to {file_path}"
+    try:
+        path = Path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return f"Saved {len(content)} bytes to {file_path}"
+    except Exception as e:
+        return f"Error saving file: {e}"
 
 
 @tool("List Directory")
