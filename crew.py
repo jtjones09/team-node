@@ -17,7 +17,7 @@ from config import (
     MAX_ITER, MAX_RPM,
 )
 from routing.model_router import route_model, ModelTier
-from tracking.usage_tracker import UsageTracker
+from tracking.fabric_tracker import FabricTracker
 from tracking.crew_callbacks import log_crew_run
 from memory.fabric_bridge import FabricBridge
 from memory.markdown_log import MarkdownLog
@@ -175,6 +175,18 @@ def build_crew(
 
     tasks = []
 
+    # Get continuity context from previous sessions
+    continuity_context = ""
+    if project:
+        try:
+            from tracking.continuity import ContinuityThread
+            continuity = ContinuityThread(project=project)
+            continuity_context = continuity.build_context_injection()
+            if continuity_context and verbose:
+                print(f"  Continuity: Previous session found")
+        except Exception:
+            pass
+
     # Planner always runs first for context
     if "planner_researcher" in active_agents:
         research_task = Task(
@@ -183,6 +195,7 @@ def build_crew(
                 f"Search the team's shared memory fabric FIRST for any prior knowledge. "
                 f"If you find existing analysis, use it instead of re-fetching. "
                 f"Only fetch URLs or search the web if needed.\n\nGoal: {goal}"
+                f"{continuity_context}"
             ),
             expected_output="A context briefing with relevant prior knowledge and research findings.",
             agent=active_agents["planner_researcher"],

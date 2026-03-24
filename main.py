@@ -116,22 +116,24 @@ def main():
     if args.history:
         if not args.project:
             parser.error("--history requires --project")
-        from memory.provenance import ProvenanceTracker
-        from config import get_project_paths
-        paths = get_project_paths(args.project)
-        tracker = ProvenanceTracker(str(paths["project_dir"]))
-        entries = tracker.get_recent(limit=20)
-        if not entries:
-            print(f"No provenance history for project '{args.project}'.")
+        from tracking.continuity import ContinuityThread
+        continuity = ContinuityThread(project=args.project)
+        # Search for all session summaries
+        import subprocess
+        from config import FABRIC_BINARY
+        result = subprocess.run(
+            [FABRIC_BINARY, "fabric", "search",
+             "--where", f"kind=session_summary AND project={args.project}",
+             "--limit", "20",
+             "--project", args.project],
+            capture_output=True, text=True, timeout=30,
+        )
+        if not result.stdout.strip() or "No matching" in result.stdout:
+            print(f"No session history for project '{args.project}'.")
         else:
-            print(f"Provenance history for '{args.project}' ({len(entries)} entries):")
+            print(f"Session history for '{args.project}':")
             print("-" * 60)
-            for entry in entries:
-                ts = entry.get("timestamp", "unknown")
-                agent = entry.get("agent", "unknown")
-                etype = entry.get("type", "unknown")
-                summary = entry.get("output_summary", entry.get("decision", ""))[:100]
-                print(f"  [{ts}] {agent} ({etype}): {summary}")
+            print(result.stdout)
         return
 
     if not args.goal:
@@ -193,6 +195,23 @@ def main():
     )
     print(f"\n  Run tracked: {event_id} ({elapsed_ms/1000:.1f}s)")
     print(f"  Usage: python main.py --usage --project {args.project or 'all'}")
+
+    # Store session summary for continuity
+    if args.project:
+        try:
+            from tracking.continuity import ContinuityThread
+            continuity = ContinuityThread(project=args.project)
+            result_summary = str(result)[:200] if result else "completed"
+            continuity.store_session_summary(
+                description=f"{args.goal[:100]}. Result: {result_summary}",
+                agents=meta.get("domains", []),
+                models=list(meta.get("models", {}).values()),
+                cost=0.0,  # Will be enriched by fabric tracker
+                duration_ms=elapsed_ms,
+            )
+            print(f"  Session summary stored for continuity.")
+        except Exception as e:
+            print(f"  Warning: could not store session summary: {e}")
 
     # Auto-save HTML mockups
     saved_path = _extract_and_save_html(str(result), args.project)
