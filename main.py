@@ -42,10 +42,10 @@ def _extract_and_save_html(result_text: str, project: str | None) -> str | None:
 
 
 def run_usage(args):
-    """Show usage dashboard in terminal."""
-    from tracking.usage_tracker import UsageTracker
+    """Show usage dashboard from fabric."""
+    from tracking.fabric_tracker import FabricTracker
 
-    tracker = UsageTracker()
+    tracker = FabricTracker(project=args.project or "default")
 
     if args.usage_export:
         print(tracker.export_json(
@@ -55,38 +55,17 @@ def run_usage(args):
         return
 
     group_by = args.usage_group or "model"
-    summary = tracker.summary(project=args.project, group_by=group_by)
-
-    if not summary:
-        print("No usage data yet. Run some agents first!")
-        return
+    summary_json = tracker.summary(project=args.project, group_by=group_by)
 
     print(f"\n  Usage Summary (grouped by {group_by})")
     print("  " + "=" * 60)
-    total_cost = 0.0
-    total_calls = 0
-    for row in summary:
-        group_val = row.get(group_by, "unknown")
-        calls = row.get("call_count", 0)
-        tokens = row.get("total_tokens", 0)
-        cost = row.get("total_cost_usd", 0.0)
-        total_cost += cost
-        total_calls += calls
-        print(f"  {group_val:<30} {calls:>5} calls  {tokens:>10,} tokens  ${cost:>8.4f}")
-    print("  " + "-" * 60)
-    print(f"  {'TOTAL':<30} {total_calls:>5} calls  {'':>10}  ${total_cost:>8.4f}")
+    print(f"  {summary_json}")
+
+    total = tracker.total_cost(project=args.project)
+    print(f"\n  Total cost: ${total:.4f}")
 
     if args.project:
-        print(f"\n  (filtered to project: {args.project})")
-
-    # Show available tags
-    tags = tracker.get_all_tags()
-    if tags:
-        print(f"\n  Tags: {', '.join(tags)}")
-
-    projects = tracker.get_all_projects()
-    if projects:
-        print(f"  Projects: {', '.join(projects)}")
+        print(f"  (filtered to project: {args.project})")
     print()
 
 
@@ -185,10 +164,10 @@ def main():
     )
 
     # Track the run
-    from tracking.usage_tracker import UsageTracker
+    from tracking.fabric_tracker import FabricTracker
     from tracking.crew_callbacks import log_crew_run
 
-    tracker = UsageTracker()
+    tracker = FabricTracker(project=args.project or "default")
     start_time = time.time()
 
     result = crew.kickoff()

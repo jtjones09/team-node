@@ -1,43 +1,37 @@
-"""CrewAI callback hooks for automatic usage tracking.
+"""CrewAI callback hooks for automatic usage tracking via fabric.
 
 CrewAI emits step callbacks that include token usage.
 This module hooks into those callbacks to automatically
-log every LLM call to the usage tracker.
+log every LLM call as a fabric node.
 
 Usage:
-    tracker = UsageTracker()
+    tracker = FabricTracker(project="reallycoons")
     callbacks = create_tracking_callbacks(tracker, project="reallycoons")
-    # Pass to crew or agent configuration
 """
 
 import time
 from typing import Any
 
-from tracking.usage_tracker import UsageTracker, UsageEvent
+from tracking.fabric_tracker import FabricTracker, UsageEvent
 
 
 def create_step_callback(
-    tracker: UsageTracker,
+    tracker: FabricTracker,
     project: str = "",
     domain: str = "",
     tier: str = "",
     model: str = "",
     tags: list[str] | None = None,
 ):
-    """Create a CrewAI step_callback that logs usage.
-
-    CrewAI calls step_callback(step_output) after each agent step.
-    The step_output contains token usage when available.
-    """
+    """Create a CrewAI step_callback that logs usage to the fabric."""
     _tags = tags or []
     _start_time = time.time()
 
     def callback(step_output: Any) -> None:
         nonlocal _start_time
         elapsed = int((time.time() - _start_time) * 1000)
-        _start_time = time.time()  # Reset for next step
+        _start_time = time.time()
 
-        # Extract what we can from CrewAI's step output
         agent_name = ""
         operation = "step"
         output_text = ""
@@ -49,7 +43,6 @@ def create_step_callback(
         if hasattr(step_output, "tool"):
             operation = f"tool:{step_output.tool}"
 
-        # Estimate tokens from output length (rough: 1 token ~= 4 chars)
         est_output_tokens = len(output_text) // 4 if output_text else 0
 
         event = UsageEvent(
@@ -69,7 +62,7 @@ def create_step_callback(
 
 
 def log_crew_run(
-    tracker: UsageTracker,
+    tracker: FabricTracker,
     project: str,
     goal: str,
     domains: list[str],
@@ -79,7 +72,7 @@ def log_crew_run(
     duration_ms: int = 0,
     tags: list[str] | None = None,
 ) -> str:
-    """Log a complete crew run as a single summary event."""
+    """Log a complete crew run as a single summary event in the fabric."""
     event = UsageEvent(
         project=project,
         domain=",".join(domains),

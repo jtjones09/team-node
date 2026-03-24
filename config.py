@@ -81,7 +81,7 @@ LOG_DIR = DATA_DIR / "logs"
 
 FABRIC_BINARY = os.environ.get(
     "ECPHORY_BINARY",
-    str(Path.home() / "projects" / "intent-node" / "target" / "release" / "intent")
+    str(Path.home() / "projects" / "ecphory" / "target" / "release" / "intent")
 )
 
 # Ensure data directories exist
