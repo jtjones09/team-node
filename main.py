@@ -97,6 +97,9 @@ def main():
     parser.add_argument("--heartbeat", action="store_true", help="Run heartbeat pulse (once or daemon).")
     parser.add_argument("--daemon", action="store_true", help="Run heartbeat as a repeating daemon.")
 
+    # Notifications
+    parser.add_argument("--notifications", action="store_true", help="Show recent notifications from fabric.")
+
     args = parser.parse_args()
 
     if args.setup:
@@ -107,9 +110,31 @@ def main():
         run_usage(args)
         return
 
+    if args.notifications:
+        from config import FABRIC_BINARY
+        import subprocess
+        project = args.project or "default"
+        result = subprocess.run(
+            [FABRIC_BINARY, "fabric", "search",
+             "--where", "kind=notification",
+             "--limit", "20",
+             "--project", project],
+            capture_output=True, text=True, timeout=30,
+        )
+        if not result.stdout.strip() or "No matching" in result.stdout:
+            print(f"No recent notifications for project '{project}'.")
+        else:
+            print(f"Recent notifications for '{project}':")
+            print("-" * 60)
+            print(result.stdout)
+        return
+
     if args.heartbeat:
         from heartbeat.pulse import Heartbeat
-        hb = Heartbeat(project=args.project or "default")
+        from notifications.channels import build_manager
+        project = args.project or "default"
+        notifier = build_manager(project=project)
+        hb = Heartbeat(project=project, notification_manager=notifier)
         if args.daemon:
             hb.run_daemon()
         else:

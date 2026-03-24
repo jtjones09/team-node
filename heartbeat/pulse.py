@@ -32,12 +32,14 @@ class Heartbeat:
         project: str = "default",
         cost_threshold: float = 5.0,
         staleness_days: int = 30,
+        notification_manager=None,
     ):
         from config import FABRIC_BINARY
         self._binary = binary_path or FABRIC_BINARY
         self._project = project
         self._cost_threshold = cost_threshold
         self._staleness_days = staleness_days
+        self._notifier = notification_manager
 
     def _run_cli(self, *args: str) -> subprocess.CompletedProcess:
         cmd = [self._binary, *args]
@@ -175,8 +177,15 @@ class Heartbeat:
         findings = {"check": "knowledge_gaps", "gaps": 0}
         return findings
 
+    def _notify(self, level, message: str, context: dict[str, Any] | None = None):
+        """Send a notification if a notification manager is configured."""
+        if self._notifier:
+            self._notifier.notify(level, message, context)
+
     def pulse(self) -> dict[str, Any]:
         """Run one complete heartbeat pulse. Returns summary."""
+        from notifications.channels import NotificationLevel
+
         pulse_id = str(uuid.uuid4())[:8]
         timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -191,7 +200,9 @@ class Heartbeat:
         results.append(coherence)
         alerts = coherence.get("alerts", 0)
         if alerts:
-            print(f"  Coherence: {coherence.get('details', '')}")
+            detail = coherence.get("details", "")
+            print(f"  Coherence: {detail}")
+            self._notify(NotificationLevel.INFO, f"Coherence: {detail}", {"pulse_id": pulse_id})
         else:
             print(f"  Coherence: OK")
 
@@ -199,7 +210,9 @@ class Heartbeat:
         cost = self.check_cost(pulse_id)
         results.append(cost)
         if cost.get("alerts", 0):
-            print(f"  Cost: ALERT — {cost.get('details', '')}")
+            detail = cost.get("details", "")
+            print(f"  Cost: ALERT — {detail}")
+            self._notify(NotificationLevel.ALERT, f"Cost: {detail}", {"pulse_id": pulse_id})
         else:
             print(f"  Cost: ${cost.get('total_cost', 0):.2f} (threshold: ${self._cost_threshold})")
 
@@ -212,13 +225,24 @@ class Heartbeat:
         # d. Knowledge gaps
         gaps = self.check_knowledge_gaps(pulse_id)
         results.append(gaps)
-        print(f"  Knowledge gaps: {gaps.get('gaps', 0)} detected")
+        gap_count = gaps.get("gaps", 0)
+        print(f"  Knowledge gaps: {gap_count} detected")
+        if gap_count:
+            self._notify(NotificationLevel.INFO, f"Knowledge gaps: {gap_count} detected", {"pulse_id": pulse_id})
 
         # e. Session summary
         total_alerts = sum(r.get("alerts", 0) for r in results)
         total_gaps = sum(r.get("gaps", 0) for r in results)
         summary = f"Heartbeat at {timestamp}: 4 checks completed, {total_alerts} alert(s), {total_gaps} gap(s)"
         self._store_finding(summary, "pulse_summary", pulse_id, "info")
+
+        # Multiple ALERTs in one pulse → CRITICAL
+        if total_alerts >= 2:
+            self._notify(
+                NotificationLevel.CRITICAL,
+                f"Multiple alerts in pulse {pulse_id}: {total_alerts} alert(s)",
+                {"pulse_id": pulse_id},
+            )
 
         print(f"  {'-' * 50}")
         print(f"  Summary: {summary}")
