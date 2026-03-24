@@ -93,6 +93,10 @@ def main():
     parser.add_argument("--fast", action="store_true", help="Force all agents to use Haiku (cheapest).")
     parser.add_argument("--premium", action="store_true", help="Force all agents to use Opus (best quality).")
 
+    # Backend mode
+    parser.add_argument("--local-only", action="store_true", help="Force all tiers to Ollama (never calls Anthropic).")
+    parser.add_argument("--api-only", action="store_true", help="Force all tiers to Anthropic API.")
+
     # Heartbeat
     parser.add_argument("--heartbeat", action="store_true", help="Run heartbeat pulse (once or daemon).")
     parser.add_argument("--daemon", action="store_true", help="Run heartbeat as a repeating daemon.")
@@ -177,7 +181,10 @@ def main():
     if not args.goal:
         parser.error("--goal is required (unless using --setup, --list-projects, --history, or --usage)")
 
-    if not args.ollama:
+    local_only = getattr(args, "local_only", False)
+    api_only = getattr(args, "api_only", False)
+
+    if not args.ollama and not local_only:
         api_key = get_api_key()
         if not api_key:
             print("Error: No Anthropic API key found.")
@@ -201,6 +208,8 @@ def main():
         ollama_model=args.model,
         project=args.project,
         force_tier=force_tier,
+        local_only=local_only,
+        api_only=api_only,
     )
 
     # Track the run

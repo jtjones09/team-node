@@ -58,6 +58,12 @@ DEFAULT_PLANNER_MODEL = os.environ.get("TEAMNODE_PLANNER_MODEL", MODEL_SONNET)
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
 
+# Hybrid model routing: local Ollama for FAST/STANDARD, API for PREMIUM
+OLLAMA_URL = os.environ.get("OLLAMA_URL", OLLAMA_BASE_URL)
+OLLAMA_FAST_MODEL = os.environ.get("OLLAMA_FAST_MODEL", "qwen2.5:32b")
+OLLAMA_STANDARD_MODEL = os.environ.get("OLLAMA_STANDARD_MODEL", "llama3.3:70b")
+ANTHROPIC_PREMIUM = os.environ.get("ANTHROPIC_PREMIUM", "true").lower() in ("true", "1", "yes")
+
 # --- Temperature Settings (per agent domain) ---
 TEMPERATURES = {
     "engineer": 0.2,

@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 os.environ.setdefault("ANTHROPIC_API_KEY", "fake-key-for-tests")
 
 from routing.model_router import (
-    ModelTier, route_model, _estimate_complexity, _count_signals,
+    ModelTier, BackendType, route_model, _estimate_complexity, _count_signals,
+    _resolve_backend,
     HIGH_COMPLEXITY_SIGNALS, LOW_COMPLEXITY_SIGNALS,
 )
 
@@ -98,3 +99,81 @@ class TestRouting:
         call_args = mock_log.call_args
         assert call_args[0][0] == "test_project"  # project
         assert hasattr(call_args[0][1], "tier")  # decision object
+
+
+class TestHybridBackend:
+    """Tests for hybrid Ollama/Anthropic routing."""
+
+    def test_api_only_forces_anthropic(self):
+        model, backend = _resolve_backend(ModelTier.FAST, api_only=True)
+        assert backend == BackendType.ANTHROPIC_API
+        assert "anthropic" in model or "claude" in model
+
+    def test_api_only_standard(self):
+        model, backend = _resolve_backend(ModelTier.STANDARD, api_only=True)
+        assert backend == BackendType.ANTHROPIC_API
+
+    def test_api_only_premium(self):
+        model, backend = _resolve_backend(ModelTier.PREMIUM, api_only=True)
+        assert backend == BackendType.ANTHROPIC_API
+
+    def test_local_only_forces_ollama(self):
+        model, backend = _resolve_backend(ModelTier.FAST, local_only=True)
+        assert backend == BackendType.OLLAMA_LOCAL
+        assert model.startswith("ollama/")
+
+    def test_local_only_standard(self):
+        model, backend = _resolve_backend(ModelTier.STANDARD, local_only=True)
+        assert backend == BackendType.OLLAMA_LOCAL
+        assert model.startswith("ollama/")
+
+    def test_local_only_premium_uses_ollama(self):
+        model, backend = _resolve_backend(ModelTier.PREMIUM, local_only=True)
+        assert backend == BackendType.OLLAMA_LOCAL
+        assert model.startswith("ollama/")
+
+    def test_premium_defaults_to_anthropic(self):
+        model, backend = _resolve_backend(ModelTier.PREMIUM)
+        assert backend == BackendType.ANTHROPIC_API
+
+    @patch("routing.model_router._is_ollama_available", return_value=True)
+    def test_fast_uses_ollama_when_available(self, mock_ollama):
+        model, backend = _resolve_backend(ModelTier.FAST)
+        assert backend == BackendType.OLLAMA_LOCAL
+        assert model.startswith("ollama/")
+
+    @patch("routing.model_router._is_ollama_available", return_value=True)
+    def test_standard_uses_ollama_when_available(self, mock_ollama):
+        model, backend = _resolve_backend(ModelTier.STANDARD)
+        assert backend == BackendType.OLLAMA_LOCAL
+        assert model.startswith("ollama/")
+
+    @patch("routing.model_router._is_ollama_available", return_value=False)
+    def test_fallback_to_anthropic_when_ollama_down(self, mock_ollama):
+        model, backend = _resolve_backend(ModelTier.FAST)
+        assert backend == BackendType.ANTHROPIC_API
+
+    @patch("routing.model_router._is_ollama_available", return_value=True)
+    def test_route_model_includes_backend(self, mock_ollama):
+        decision = route_model("fetch the homepage", "engineer")
+        assert hasattr(decision, "backend")
+        assert isinstance(decision.backend, BackendType)
+
+    @patch("routing.model_router._is_ollama_available", return_value=True)
+    @patch("routing.model_router._log_routing_decision")
+    def test_route_model_local_only(self, mock_log, mock_ollama):
+        decision = route_model("complex analysis", "architect", local_only=True)
+        assert decision.backend == BackendType.OLLAMA_LOCAL
+
+    @patch("routing.model_router._log_routing_decision")
+    def test_route_model_api_only(self, mock_log):
+        decision = route_model("complex analysis", "architect", api_only=True)
+        assert decision.backend == BackendType.ANTHROPIC_API
+
+    @patch("routing.model_router._is_ollama_available", return_value=True)
+    @patch("routing.model_router._log_routing_decision")
+    def test_telemetry_records_backend(self, mock_log, mock_ollama):
+        route_model("test", "engineer", project="test_proj")
+        mock_log.assert_called_once()
+        decision = mock_log.call_args[0][1]
+        assert hasattr(decision, "backend")

@@ -16,7 +16,7 @@ from config import (
     OLLAMA_BASE_URL, OLLAMA_MODEL, get_project_paths,
     MAX_ITER, MAX_RPM,
 )
-from routing.model_router import route_model, ModelTier
+from routing.model_router import route_model, ModelTier, BackendType, print_backend_summary
 from tracking.fabric_tracker import FabricTracker
 from tracking.crew_callbacks import log_crew_run
 from memory.fabric_bridge import FabricBridge
@@ -111,6 +111,8 @@ def build_crew(
     ollama_model: str | None = None,
     project: str | None = None,
     force_tier: ModelTier | None = None,
+    local_only: bool = False,
+    api_only: bool = False,
 ) -> Crew:
     """Assemble the team with dynamic model routing per agent."""
     llms = {}
@@ -144,6 +146,9 @@ def build_crew(
             domain=domain,
             has_fabric_context=has_context,
             force_tier=force_tier,
+            project=project,
+            local_only=local_only,
+            api_only=api_only,
         )
         routing_decisions[domain] = decision
 
@@ -152,10 +157,7 @@ def build_crew(
         print(f"  Assigned to: {', '.join(routed_domains)}")
         print(f"  Fabric context: {'yes' if has_context else 'no (first run)'}")
         print(f"  Max iterations: {MAX_ITER}")
-        print(f"  Model routing:")
-        for domain, decision in routing_decisions.items():
-            print(f"    {domain}: {decision.tier.value} ({decision.model.split('/')[-1]}) — {decision.reason}")
-        print()
+        print_backend_summary(routing_decisions)
 
     # Only create the agents we actually need
     active_agents = {}
@@ -163,13 +165,20 @@ def build_crew(
         lens = PerspectiveLens(memory_backend, domain)
         factory = AGENT_FACTORIES[domain]
 
-        # Use routed model unless Ollama override
+        # Use routed model unless legacy --ollama override
         if domain not in llms and not use_ollama:
             decision = routing_decisions[domain]
-            llms[domain] = LLM(
-                model=decision.model,
-                temperature=TEMPERATURES.get(domain, 0.3),
-            )
+            if decision.backend == BackendType.OLLAMA_LOCAL:
+                llms[domain] = LLM(
+                    model=decision.model,
+                    base_url=OLLAMA_BASE_URL,
+                    temperature=TEMPERATURES.get(domain, 0.3),
+                )
+            else:
+                llms[domain] = LLM(
+                    model=decision.model,
+                    temperature=TEMPERATURES.get(domain, 0.3),
+                )
 
         active_agents[domain] = factory(lens, logger, llm_override=llms.get(domain))
 

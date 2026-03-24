@@ -1,30 +1,41 @@
 """Dynamic model router — selects model tier based on task complexity + cost awareness.
 
-Three tiers:
-  FAST    = Haiku   ($0.25/$1.25 per MTok) — simple tool calls, lookups, fetches
-  STANDARD = Sonnet  ($3/$15 per MTok) — analysis, writing, domain work
-  PREMIUM  = Opus/Sonnet ($15/$75 per MTok) — multi-step reasoning, architecture
+Three tiers with hybrid local/API backends:
+  FAST     = Ollama local  (default: qwen2.5:32b)    — $0/token
+  STANDARD = Ollama local  (default: llama3.3:70b)    — $0/token
+  PREMIUM  = Anthropic API (Sonnet or Opus)           — $3-$75/MTok
+
+Falls back to Anthropic API if Ollama is unreachable.
+
+Override modes:
+  --local-only  → all tiers use Ollama (never calls Anthropic)
+  --api-only    → all tiers use Anthropic API (original behavior)
 
 The router classifies tasks by signal analysis, not a separate LLM call.
-Signals: goal length, keyword complexity, domain, number of constraints,
-whether prior fabric context exists.
-
-Self-aware: reads its own telemetry from the fabric to adjust routing
-based on accumulated cost. This is the first self-referential reasoning loop.
+Self-aware: reads its own telemetry from the fabric to adjust routing.
 """
 
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
-from config import MODEL_HAIKU, MODEL_SONNET, MODEL_OPUS
+from config import (
+    MODEL_HAIKU, MODEL_SONNET, MODEL_OPUS,
+    OLLAMA_URL, OLLAMA_FAST_MODEL, OLLAMA_STANDARD_MODEL,
+    ANTHROPIC_PREMIUM,
+)
 
 
 class ModelTier(Enum):
     FAST = "fast"
     STANDARD = "standard"
     PREMIUM = "premium"
+
+
+class BackendType(Enum):
+    OLLAMA_LOCAL = "ollama_local"
+    ANTHROPIC_API = "anthropic_api"
 
 
 @dataclass
@@ -34,6 +45,7 @@ class RoutingDecision:
     reason: str
     complexity_score: int
     cost_context: str = ""
+    backend: BackendType = BackendType.ANTHROPIC_API
 
 
 # --- Signal patterns ---
@@ -101,6 +113,28 @@ def _estimate_complexity(goal: str, domain: str, has_fabric_context: bool) -> in
     return max(0, min(100, score))
 
 
+def _check_ollama_available() -> bool:
+    """Check if Ollama is reachable."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"{OLLAMA_URL}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+# Cache Ollama availability per session to avoid repeated checks
+_ollama_available: bool | None = None
+
+
+def _is_ollama_available() -> bool:
+    global _ollama_available
+    if _ollama_available is None:
+        _ollama_available = _check_ollama_available()
+    return _ollama_available
+
+
 def _get_project_cost(project: str) -> float:
     """Query fabric for total cost spent on this project's telemetry.
 
@@ -129,6 +163,7 @@ def _log_routing_decision(project: str, decision: "RoutingDecision"):
                 "decision": decision.tier.value,
                 "reason": decision.reason,
                 "complexity_score": decision.complexity_score,
+                "backend": decision.backend.value,
             },
         )
         tracker.log(event)
@@ -142,11 +177,13 @@ def route_model(
     has_fabric_context: bool = False,
     force_tier: ModelTier | None = None,
     project: str | None = None,
+    local_only: bool = False,
+    api_only: bool = False,
 ) -> RoutingDecision:
-    """Select the appropriate model tier for a task.
+    """Select the appropriate model tier and backend for a task.
 
-    Now self-aware: checks fabric telemetry for accumulated cost
-    and adjusts routing accordingly.
+    Hybrid routing: FAST/STANDARD use Ollama (local), PREMIUM uses Anthropic API.
+    Falls back to Anthropic if Ollama is unreachable.
 
     Args:
         goal: The task description / goal text.
@@ -154,21 +191,20 @@ def route_model(
         has_fabric_context: Whether the fabric already has relevant nodes.
         force_tier: Override to force a specific tier.
         project: Project name for cost-aware routing.
+        local_only: Force all tiers to Ollama.
+        api_only: Force all tiers to Anthropic API.
 
     Returns:
-        RoutingDecision with the selected model and reasoning.
+        RoutingDecision with the selected model, backend, and reasoning.
     """
     if force_tier:
-        model_map = {
-            ModelTier.FAST: MODEL_HAIKU,
-            ModelTier.STANDARD: MODEL_SONNET,
-            ModelTier.PREMIUM: MODEL_OPUS,
-        }
+        model, backend = _resolve_backend(force_tier, local_only, api_only)
         decision = RoutingDecision(
             tier=force_tier,
-            model=model_map[force_tier],
+            model=model,
             reason=f"Forced to {force_tier.value}",
             complexity_score=0,
+            backend=backend,
         )
         if project:
             _log_routing_decision(project, decision)
@@ -195,22 +231,20 @@ def route_model(
     # Tier thresholds
     if adjusted >= 60:
         tier = ModelTier.PREMIUM
-        model = MODEL_SONNET
         reason = f"High complexity ({complexity}{'+' + str(cost_bias) if cost_bias else ''}={adjusted}): multi-step reasoning or creative generation"
     elif adjusted >= 25:
         tier = ModelTier.STANDARD
-        model = MODEL_SONNET
         reason = f"Standard complexity ({complexity}{'+' + str(cost_bias) if cost_bias else ''}={adjusted}): domain analysis and synthesis"
     else:
         tier = ModelTier.FAST
-        model = MODEL_HAIKU
         reason = f"Low complexity ({complexity}{'+' + str(cost_bias) if cost_bias else ''}={adjusted}): lookup, fetch, or simple task"
 
     # Planner/researcher always gets at least STANDARD
     if domain == "planner_researcher" and tier == ModelTier.FAST:
         tier = ModelTier.STANDARD
-        model = MODEL_SONNET
         reason = f"Planner minimum: {reason} -> upgraded to STANDARD"
+
+    model, backend = _resolve_backend(tier, local_only, api_only)
 
     decision = RoutingDecision(
         tier=tier,
@@ -218,6 +252,7 @@ def route_model(
         reason=reason,
         complexity_score=adjusted,
         cost_context=cost_context,
+        backend=backend,
     )
 
     # Log the routing decision as a fabric node
@@ -225,3 +260,65 @@ def route_model(
         _log_routing_decision(project, decision)
 
     return decision
+
+
+def _resolve_backend(
+    tier: ModelTier,
+    local_only: bool = False,
+    api_only: bool = False,
+) -> tuple[str, BackendType]:
+    """Resolve the model string and backend type for a given tier.
+
+    Returns (model_string, backend_type).
+    """
+    if api_only:
+        api_map = {
+            ModelTier.FAST: MODEL_HAIKU,
+            ModelTier.STANDARD: MODEL_SONNET,
+            ModelTier.PREMIUM: MODEL_OPUS,
+        }
+        return api_map[tier], BackendType.ANTHROPIC_API
+
+    if local_only:
+        ollama_map = {
+            ModelTier.FAST: f"ollama/{OLLAMA_FAST_MODEL}",
+            ModelTier.STANDARD: f"ollama/{OLLAMA_STANDARD_MODEL}",
+            ModelTier.PREMIUM: f"ollama/{OLLAMA_STANDARD_MODEL}",
+        }
+        return ollama_map[tier], BackendType.OLLAMA_LOCAL
+
+    # Hybrid: FAST/STANDARD → Ollama, PREMIUM → Anthropic
+    if tier == ModelTier.PREMIUM:
+        if ANTHROPIC_PREMIUM:
+            return MODEL_SONNET, BackendType.ANTHROPIC_API
+        else:
+            return f"ollama/{OLLAMA_STANDARD_MODEL}", BackendType.OLLAMA_LOCAL
+
+    # FAST or STANDARD — try Ollama first, fallback to API
+    ollama_map = {
+        ModelTier.FAST: OLLAMA_FAST_MODEL,
+        ModelTier.STANDARD: OLLAMA_STANDARD_MODEL,
+    }
+
+    if _is_ollama_available():
+        return f"ollama/{ollama_map[tier]}", BackendType.OLLAMA_LOCAL
+    else:
+        print(
+            f"  Warning: Ollama unreachable at {OLLAMA_URL}, falling back to Anthropic API",
+            file=sys.stderr,
+        )
+        fallback_map = {
+            ModelTier.FAST: MODEL_HAIKU,
+            ModelTier.STANDARD: MODEL_SONNET,
+        }
+        return fallback_map[tier], BackendType.ANTHROPIC_API
+
+
+def print_backend_summary(decisions: dict[str, "RoutingDecision"]):
+    """Print backend selection summary at startup."""
+    print("  Backend selection:")
+    for domain, d in decisions.items():
+        backend_label = "local" if d.backend == BackendType.OLLAMA_LOCAL else "API"
+        model_short = d.model.split("/")[-1] if "/" in d.model else d.model
+        print(f"    {domain}: {d.tier.value} → {d.model} ({backend_label})")
+    print()
