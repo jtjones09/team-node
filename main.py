@@ -93,6 +93,10 @@ def main():
     parser.add_argument("--fast", action="store_true", help="Force all agents to use Haiku (cheapest).")
     parser.add_argument("--premium", action="store_true", help="Force all agents to use Opus (best quality).")
 
+    # Heartbeat
+    parser.add_argument("--heartbeat", action="store_true", help="Run heartbeat pulse (once or daemon).")
+    parser.add_argument("--daemon", action="store_true", help="Run heartbeat as a repeating daemon.")
+
     args = parser.parse_args()
 
     if args.setup:
@@ -101,6 +105,15 @@ def main():
 
     if args.usage or args.usage_export:
         run_usage(args)
+        return
+
+    if args.heartbeat:
+        from heartbeat.pulse import Heartbeat
+        hb = Heartbeat(project=args.project or "default")
+        if args.daemon:
+            hb.run_daemon()
+        else:
+            hb.pulse()
         return
 
     if args.list_projects:
