@@ -200,13 +200,18 @@ def build_crew(
     if "planner_researcher" in active_agents:
         research_task = Task(
             description=(
-                f"Research and gather relevant context for the following goal. "
-                f"Search the team's shared memory fabric FIRST for any prior knowledge. "
-                f"If you find existing analysis, use it instead of re-fetching. "
-                f"Only fetch URLs or search the web if needed.\n\nGoal: {goal}"
+                f"Research and gather relevant context for the following goal.\n\n"
+                f"MANDATORY FIRST STEP: Call 'Retrieve Memory' with the key topics from "
+                f"this goal. Examine the results. If you find a detailed analysis with a "
+                f"timestamp less than 24 hours old, USE IT — do not re-fetch or re-analyze. "
+                f"Only proceed to fetch_url or web_search if fabric results are missing or stale "
+                f"(older than 24 hours).\n\n"
+                f"If you do fetch new information, store it in the fabric with a timestamp "
+                f"so future runs can reuse it. Do NOT store duplicates of existing analysis."
+                f"\n\nGoal: {goal}"
                 f"{continuity_context}"
             ),
-            expected_output="A context briefing with relevant prior knowledge and research findings.",
+            expected_output="A context briefing built from fabric memory first, supplemented with fresh research only if needed.",
             agent=active_agents["planner_researcher"],
         )
         tasks.append(research_task)
